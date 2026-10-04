@@ -75,29 +75,13 @@ func New(id, path string) (Provider, error) {
 func Find(id string) (Provider, error) {
 	switch id {
 	case "", ClaudeID:
-		p, err := FindClaude()
-		if err != nil {
-			return nil, err
-		}
-		return p, nil
+		return FindClaude()
 	case CodexID:
-		p, err := FindCodex()
-		if err != nil {
-			return nil, err
-		}
-		return p, nil
+		return FindCodex()
 	case GeminiID:
-		p, err := FindGemini()
-		if err != nil {
-			return nil, err
-		}
-		return p, nil
+		return FindGemini()
 	case CopilotID:
-		p, err := FindCopilot()
-		if err != nil {
-			return nil, err
-		}
-		return p, nil
+		return FindCopilot()
 	}
 	return New(id, "")
 }

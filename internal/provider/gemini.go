@@ -22,13 +22,13 @@ type Gemini struct {
 // The first three pick another login than the profile's; the last moves the login into the shared Keychain.
 var geminiAuthOverrideEnv = []string{"GEMINI_API_KEY", "GOOGLE_GENAI_USE_VERTEXAI", "GOOGLE_GEMINI_BASE_URL", "GEMINI_FORCE_ENCRYPTED_FILE_STORAGE"}
 
-func FindGemini() (Gemini, error) {
+func FindGemini() (Provider, error) {
 	if path := os.Getenv("CSM_GEMINI"); path != "" {
 		return Gemini{Path: path}, nil
 	}
 	path, err := exec.LookPath("gemini")
 	if err != nil {
-		return Gemini{}, errors.New("Gemini CLI is not installed or not on PATH.\n\nInstall it with `npm install -g @google/gemini-cli`, then run: csm doctor")
+		return nil, errors.New("Gemini CLI is not installed or not on PATH.\n\nInstall it with `npm install -g @google/gemini-cli`, then run: csm doctor")
 	}
 	return Gemini{Path: path}, nil
 }

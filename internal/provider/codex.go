@@ -23,13 +23,13 @@ var codexAuthOverrideEnv = []string{"CODEX_ACCESS_TOKEN", "CODEX_API_KEY"}
 
 const codexRPCTimeout = 20 * time.Second
 
-func FindCodex() (Codex, error) {
+func FindCodex() (Provider, error) {
 	if path := os.Getenv("CSM_CODEX"); path != "" {
 		return Codex{Path: path}, nil
 	}
 	path, err := exec.LookPath("codex")
 	if err != nil {
-		return Codex{}, errors.New("Codex is not installed or not on PATH.\n\nInstall it with `npm install -g @openai/codex`, then run: csm doctor")
+		return nil, errors.New("Codex is not installed or not on PATH.\n\nInstall it with `npm install -g @openai/codex`, then run: csm doctor")
 	}
 	return Codex{Path: path}, nil
 }

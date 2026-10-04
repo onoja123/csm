@@ -23,13 +23,13 @@ var copilotAuthOverrideEnv = []string{"COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHU
 
 const copilotDefaultHost = "https://github.com"
 
-func FindCopilot() (Copilot, error) {
+func FindCopilot() (Provider, error) {
 	if path := os.Getenv("CSM_COPILOT"); path != "" {
 		return Copilot{Path: path}, nil
 	}
 	path, err := exec.LookPath("copilot")
 	if err != nil {
-		return Copilot{}, errors.New("GitHub Copilot CLI is not installed or not on PATH.\n\nInstall it with `npm install -g @github/copilot`, then run: csm doctor")
+		return nil, errors.New("GitHub Copilot CLI is not installed or not on PATH.\n\nInstall it with `npm install -g @github/copilot`, then run: csm doctor")
 	}
 	return Copilot{Path: path}, nil
 }

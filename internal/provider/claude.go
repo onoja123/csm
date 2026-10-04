@@ -22,13 +22,13 @@ type Claude struct {
 // These override per-profile login, which would make every profile the same account.
 var claudeAuthOverrideEnv = []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"}
 
-func FindClaude() (Claude, error) {
+func FindClaude() (Provider, error) {
 	if path := os.Getenv("CSM_CLAUDE"); path != "" {
 		return Claude{Path: path}, nil
 	}
 	path, err := exec.LookPath("claude")
 	if err != nil {
-		return Claude{}, errors.New("Claude Code is not installed or not on PATH.\n\nInstall it from https://code.claude.com, then run: csm doctor")
+		return nil, errors.New("Claude Code is not installed or not on PATH.\n\nInstall it from https://code.claude.com, then run: csm doctor")
 	}
 	return Claude{Path: path}, nil
 }
