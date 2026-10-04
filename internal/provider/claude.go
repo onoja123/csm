@@ -15,26 +15,30 @@ import (
 	"time"
 )
 
+// These override per-profile login, which would make every profile the same account.
+var claudeAuthOverrideEnv = []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"}
+
 type Claude struct {
 	Path string
 }
-
-// These override per-profile login, which would make every profile the same account.
-var claudeAuthOverrideEnv = []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"}
 
 func FindClaude() (Provider, error) {
 	if path := os.Getenv("CSM_CLAUDE"); path != "" {
 		return Claude{Path: path}, nil
 	}
+
 	path, err := exec.LookPath("claude")
 	if err != nil {
 		return nil, errors.New("Claude Code is not installed or not on PATH.\n\nInstall it from https://code.claude.com, then run: csm doctor")
 	}
+
 	return Claude{Path: path}, nil
 }
 
-func (c Claude) ID() string         { return ClaudeID }
-func (c Claude) Name() string       { return "Claude Code" }
+func (c Claude) ID() string { return ClaudeID }
+
+func (c Claude) Name() string { return "Claude Code" }
+
 func (c Claude) Executable() string { return c.Path }
 
 func (c Claude) CheckEnv() error { return checkAuthEnv(claudeAuthOverrideEnv) }
@@ -48,6 +52,7 @@ func (c Claude) Version() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("run %s --version: %w", c.Path, err)
 	}
+
 	return strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(string(out)), "(Claude Code)")), nil
 }
 
@@ -56,7 +61,9 @@ func (c Claude) Features() (Features, error) {
 	if err != nil {
 		return Features{}, fmt.Errorf("run %s --help: %w", c.Path, err)
 	}
+
 	help := string(out)
+
 	return Features{
 		Auth:         strings.Contains(help, "\n  auth "),
 		Supervise:    strings.Contains(help, "--settings"),
@@ -80,15 +87,14 @@ func (c Claude) Identity(profileDir string) (Identity, error) {
 	cmd.Env = c.Env(profileDir)
 	out, err := cmd.Output()
 	var st claudeAuthStatus
+
 	// A logged-out profile exits non-zero but still prints valid JSON.
 	if jsonErr := json.Unmarshal(out, &st); jsonErr != nil {
-
 		if err != nil {
 			return Identity{}, fmt.Errorf("claude auth status failed: %w", err)
 		}
 
 		return Identity{}, fmt.Errorf("claude auth status returned unexpected output: %w", jsonErr)
-
 	}
 
 	return Identity{LoggedIn: st.LoggedIn, Email: st.Email, ProfileDir: st.ConfigDirectory}, nil
@@ -102,6 +108,7 @@ func (c Claude) Login(profileDir string) error {
 	cmd := exec.Command(c.Path, "auth", "login")
 	cmd.Env = c.Env(profileDir)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+
 	return cmd.Run()
 }
 
@@ -136,6 +143,7 @@ func (c Claude) LaunchArgs(csmPath string) []string {
 		StatusLine: StatusLine{Type: "command", Command: quoted + " hook status-line"},
 	}
 	data, _ := json.Marshal(s)
+
 	return []string{"--settings", string(data)}
 }
 
@@ -146,16 +154,20 @@ func (c Claude) UserStatusLine(projectDir, profileDir string) string {
 		filepath.Join(projectDir, ".claude", "settings.json"),
 		filepath.Join(profileDir, "settings.json"),
 	}
+
 	for _, path := range paths {
 		data, err := os.ReadFile(path)
 		if err != nil {
 			continue
 		}
+
 		var s Settings
+
 		if json.Unmarshal(data, &s) == nil && s.StatusLine.Type == "command" && s.StatusLine.Command != "" {
 			return s.StatusLine.Command
 		}
 	}
+
 	return ""
 }
 
@@ -177,14 +189,17 @@ func (w claudeRateWindow) usage() UsageWindow {
 	if w.ResetsAt == 0 {
 		return UsageWindow{}
 	}
+
 	return UsageWindow{UsedPercent: w.UsedPercentage, ResetsAt: time.Unix(w.ResetsAt, 0)}
 }
 
 func (c Claude) ParseUsage(data []byte) (Usage, error) {
 	var in claudeStatusLineInput
+
 	if err := json.Unmarshal(data, &in); err != nil {
 		return Usage{}, err
 	}
+
 	return Usage{
 		FiveHour:   in.RateLimits.FiveHour.usage(),
 		SevenDay:   in.RateLimits.SevenDay.usage(),
@@ -204,12 +219,15 @@ func (c Claude) CurrentSession(profileDir, cwd string, since time.Time) (string,
 
 func (c Claude) NewSessionArgs(f Features, sessionID, handoffNote string) []string {
 	var args []string
+
 	if f.SessionID {
 		args = append(args, "--session-id", sessionID)
 	}
+
 	if f.SystemPrompt && handoffNote != "" {
 		args = append(args, "--append-system-prompt", handoffNote)
 	}
+
 	return args
 }
 
@@ -221,16 +239,19 @@ func (c Claude) HasSessionFlag(args []string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
 func (c Claude) RedactArgs(args []string) []string {
 	out := slices.Clone(args)
+
 	for i := 0; i+1 < len(out); i++ {
 		if out[i] == "--settings" || out[i] == "--append-system-prompt" {
 			out[i+1] = "<omitted>"
 		}
 	}
+
 	return out
 }
 
@@ -244,9 +265,11 @@ type claudeStopFailure struct {
 
 func (c Claude) ParseFailure(data []byte) (Failure, error) {
 	var ev claudeStopFailure
+
 	if err := json.Unmarshal(data, &ev); err != nil {
 		return Failure{}, err
 	}
+
 	return Failure{
 		SessionID: ev.SessionID,
 		Error:     ev.Error,
@@ -260,9 +283,11 @@ func (c Claude) ParseSessionStart(data []byte) (string, error) {
 	var ev struct {
 		SessionID string `json:"session_id"`
 	}
+
 	if err := json.Unmarshal(data, &ev); err != nil {
 		return "", err
 	}
+
 	return ev.SessionID, nil
 }
 
@@ -274,11 +299,15 @@ func classifyClaudeFailure(errorType, text string) StopReason {
 		if strings.Contains(text, "limit") && (strings.Contains(text, "usage") || strings.Contains(text, "reset")) {
 			return StopReasonUsageLimit
 		}
+
 		return StopReasonRateLimited
+
 	case "authentication_failed", "oauth_org_not_allowed", "account_on_hold":
 		return StopReasonAuthentication
+
 	case "overloaded", "server_error":
 		return StopReasonNetwork
+
 	default:
 		return StopReasonUnknown
 	}
@@ -290,17 +319,22 @@ func (c Claude) CarrySession(fromProfile, toProfile, sessionID string) ([]string
 	if err != nil || len(matches) == 0 {
 		return nil, "", err
 	}
+
 	src := matches[0]
 	dstProject := filepath.Join(toProfile, "projects", filepath.Base(filepath.Dir(src)))
+
 	if err := copyFile(src, filepath.Join(dstProject, sessionID+".jsonl")); err != nil {
 		return nil, "", err
 	}
+
 	srcExtra := filepath.Join(filepath.Dir(src), sessionID)
+
 	if _, err := os.Stat(srcExtra); err == nil {
 		if err := copyTree(srcExtra, filepath.Join(dstProject, sessionID)); err != nil {
 			return nil, "", err
 		}
 	}
+
 	return []string{"--resume", sessionID}, sessionID, nil
 }
 
@@ -310,8 +344,10 @@ func (c Claude) LinkUserConfig(profileDir string) (string, []string, error) {
 	if err != nil {
 		return "", nil, err
 	}
+
 	userDir := filepath.Join(home, ".claude")
 	linked, err := linkUserConfig(userDir, profileDir, []string{"settings.json", "CLAUDE.md", "agents", "commands", "skills"})
+
 	return userDir, linked, err
 }
 
@@ -319,23 +355,30 @@ func copyFile(src, dst string) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
 		return err
 	}
+
 	in, err := os.Open(src)
 	if err != nil {
 		return err
 	}
+
 	defer in.Close()
+
 	tmp := dst + ".csm-tmp"
 	out, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
 		return err
 	}
+
 	if _, err := io.Copy(out, in); err != nil {
 		out.Close()
+
 		return err
 	}
+
 	if err := out.Close(); err != nil {
 		return err
 	}
+
 	return os.Rename(tmp, dst)
 }
 
@@ -344,14 +387,18 @@ func copyTree(src, dst string) error {
 		if err != nil {
 			return err
 		}
+
 		rel, _ := filepath.Rel(src, path)
 		target := filepath.Join(dst, rel)
+
 		if d.IsDir() {
 			return os.MkdirAll(target, 0o700)
 		}
+
 		if !d.Type().IsRegular() {
 			return nil
 		}
+
 		return copyFile(path, target)
 	})
 }
@@ -376,6 +423,7 @@ func (c Claude) FetchUsage(ctx context.Context, profileDir string) (Usage, error
 	if err != nil && runErr != nil {
 		return Usage{}, fmt.Errorf("%w (%v)", err, runErr)
 	}
+
 	return usage, err
 }
 
@@ -388,6 +436,7 @@ func (w claudeUnifiedWindow) usage() UsageWindow {
 	if w.ResetsAt == 0 {
 		return UsageWindow{}
 	}
+
 	return UsageWindow{UsedPercent: w.Utilization * 100, ResetsAt: time.Unix(w.ResetsAt, 0)}
 }
 
@@ -408,13 +457,17 @@ func parseUsageStream(r io.Reader) (Usage, error) {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 64*1024), 4*1024*1024)
 	var usage Usage
+
 	found := false
 	resultErr := ""
+
 	for sc.Scan() {
 		var ev claudeStreamEvent
+
 		if json.Unmarshal(sc.Bytes(), &ev) != nil {
 			continue
 		}
+
 		switch ev.Type {
 		case "rate_limit_event":
 			windows := ev.RateLimitInfo.UnifiedWindows
@@ -424,20 +477,25 @@ func parseUsageStream(r io.Reader) (Usage, error) {
 				Limited:  ev.RateLimitInfo.Status == "rejected",
 			}
 			found = true
+
 		case "result":
 			if ev.IsError {
 				resultErr = ev.Result
 			}
 		}
 	}
+
 	if err := sc.Err(); err != nil {
 		return Usage{}, err
 	}
+
 	if found {
 		return usage, nil
 	}
+
 	if resultErr != "" {
 		return Usage{}, fmt.Errorf("Claude Code reported: %s", resultErr)
 	}
+
 	return Usage{}, errors.New("Claude Code did not report usage for this account")
 }

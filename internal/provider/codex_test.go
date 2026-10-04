@@ -9,9 +9,11 @@ import (
 func codexUsage(t *testing.T, payload string) Usage {
 	t.Helper()
 	var limits codexRateLimits
+
 	if err := json.Unmarshal([]byte(payload), &limits); err != nil {
 		t.Fatal(err)
 	}
+
 	return limits.usage()
 }
 
@@ -20,6 +22,7 @@ func TestCodexUsage(t *testing.T) {
 	if u.FiveHour.UsedPercent != 23 || u.FiveHour.ResetsAt.Unix() != 1790309400 || u.SevenDay.UsedPercent != 41 || u.SevenDay.ResetsAt.Unix() != 1790467200 {
 		t.Fatalf("got %+v", u)
 	}
+
 	if u.Limited || !u.SpendLimit.ResetsAt.IsZero() {
 		t.Fatalf("got %+v", u)
 	}
@@ -51,6 +54,7 @@ func TestCodexLimited(t *testing.T) {
 		{"limit reached but running on credits", `{"rateLimits":{"rateLimitReachedType":"rate_limit_reached","credits":{"hasCredits":true,"unlimited":false}}}`, false},
 		{"nothing reported", `{"rateLimits":{}}`, false},
 	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := codexUsage(t, tt.payload).Limited; got != tt.want {
@@ -62,18 +66,23 @@ func TestCodexLimited(t *testing.T) {
 
 func TestCodexArgs(t *testing.T) {
 	c := Codex{}
+
 	if got := c.NewSessionArgs(Features{SessionID: true, SystemPrompt: true}, "sid", "note"); len(got) != 0 {
 		t.Fatalf("Codex cannot take a session ID or a handoff note, got %v", got)
 	}
+
 	if !c.HasSessionFlag([]string{"resume", "--last"}) || c.HasSessionFlag([]string{"--model", "gpt"}) {
 		t.Fatal("session flag detection is wrong")
 	}
+
 	t.Setenv("CODEX_HOME", "/somewhere/else")
 	env := c.Env("/profiles/work", "CSM_ACCOUNT=work")
 	if !slices.Contains(env, "CODEX_HOME=/profiles/work") || slices.Contains(env, "CODEX_HOME=/somewhere/else") || !slices.Contains(env, "CSM_ACCOUNT=work") {
 		t.Fatal("profile directory not applied to the environment")
 	}
+
 	t.Setenv("CODEX_ACCESS_TOKEN", "x")
+
 	if err := c.CheckEnv(); err == nil {
 		t.Fatal("an access token in the environment was accepted")
 	}

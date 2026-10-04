@@ -62,6 +62,7 @@ func New(id, path string) (Provider, error) {
 	case CopilotID:
 		return Copilot{Path: path}, nil
 	}
+
 	return nil, fmt.Errorf("unknown provider %q; supported: %s", id, strings.Join(IDs, ", "))
 }
 
@@ -76,6 +77,7 @@ func Find(id string) (Provider, error) {
 	case CopilotID:
 		return FindCopilot()
 	}
+
 	return New(id, "")
 }
 
@@ -85,9 +87,12 @@ func probeOutput(p Provider, args ...string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	defer os.RemoveAll(dir)
+
 	cmd := exec.Command(p.Executable(), args...)
 	cmd.Env = p.Env(dir)
+
 	return cmd.Output()
 }
 
@@ -97,6 +102,7 @@ func checkAuthEnv(names []string) error {
 			return fmt.Errorf("%s is set in your environment.\n\nIt overrides per-profile login, so every csm account would use the same credentials.\nUnset it before using csm:\n\n    unset %s", name, name)
 		}
 	}
+
 	return nil
 }
 
@@ -105,30 +111,38 @@ func profileEnv(key, profileDir string, extra []string) []string {
 		return strings.HasPrefix(kv, key+"=")
 	})
 	env = append(env, key+"="+profileDir)
+
 	return append(env, extra...)
 }
 
 // linkUserConfig symlinks the user's own agent settings into a profile; the user's directory is never modified.
 func linkUserConfig(userDir, profileDir string, names []string) ([]string, error) {
 	var linked []string
+
 	for _, name := range names {
 		src := filepath.Join(userDir, name)
+
 		if _, err := os.Stat(src); err != nil {
 			continue
 		}
+
 		if err := os.Symlink(src, filepath.Join(profileDir, name)); err != nil {
 			return linked, err
 		}
+
 		linked = append(linked, name)
 	}
+
 	return linked, nil
 }
 
 func NewSessionID() string {
 	var b [16]byte
+
 	rand.Read(b[:])
 	b[6] = b[6]&0x0f | 0x40
 	b[8] = b[8]&0x3f | 0x80
+
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
@@ -184,7 +198,8 @@ type Features struct {
 	UsageProbe   bool
 }
 
-func (f Features) CanIsolate() bool  { return f.Auth && f.Supervise }
+func (f Features) CanIsolate() bool { return f.Auth && f.Supervise }
+
 func (f Features) CanContinue() bool { return f.Resume }
 
 // Failure is an API error the agent reported through its failure hook.

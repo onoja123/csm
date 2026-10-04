@@ -16,6 +16,13 @@ import (
 
 const stateVersion = 1
 
+var (
+	errNotSetUp           = errors.New("csm is not set up; run: csm setup")
+	errNoAccountAvailable = errors.New("all configured accounts are currently unavailable")
+
+	accountNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
+)
+
 type Config struct {
 	Version int `json:"version"`
 	// ActiveAccount is the active Claude Code account; other providers are in ActiveByProvider.
@@ -50,25 +57,26 @@ type State struct {
 	Accounts []Account
 }
 
-var errNotSetUp = errors.New("csm is not set up; run: csm setup")
-
-var accountNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
-
 func csmHome() (string, error) {
 	if dir := os.Getenv("CSM_HOME"); dir != "" {
 		return dir, nil
 	}
+
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
+
 	return filepath.Join(home, ".csm"), nil
 }
 
-func (s *State) configPath() string   { return filepath.Join(s.Home, "config.json") }
+func (s *State) configPath() string { return filepath.Join(s.Home, "config.json") }
+
 func (s *State) accountsPath() string { return filepath.Join(s.Home, "accounts.json") }
-func (s *State) accountsDir() string  { return filepath.Join(s.Home, "accounts") }
-func (s *State) projectsDir() string  { return filepath.Join(s.Home, "projects") }
+
+func (s *State) accountsDir() string { return filepath.Join(s.Home, "accounts") }
+
+func (s *State) projectsDir() string { return filepath.Join(s.Home, "projects") }
 
 func initState(home string) (*State, error) {
 	for _, dir := range []string{home, filepath.Join(home, "accounts"), filepath.Join(home, "projects")} {
@@ -76,11 +84,14 @@ func initState(home string) (*State, error) {
 			return nil, err
 		}
 	}
+
 	s, err := loadState(home)
 	if errors.Is(err, errNotSetUp) {
 		s = &State{Home: home, Config: Config{Version: stateVersion}}
+
 		return s, s.save()
 	}
+
 	return s, err
 }
 
@@ -91,12 +102,15 @@ func loadState(home string) (*State, error) {
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, errNotSetUp
 	}
+
 	if err != nil {
 		return nil, err
 	}
+
 	if err := json.Unmarshal(data, &s.Config); err != nil {
 		return nil, fmt.Errorf("read %s: %w", s.configPath(), err)
 	}
+
 	if s.Config.Version != stateVersion {
 		return nil, fmt.Errorf("%s has version %d; this csm understands version %d", s.configPath(), s.Config.Version, stateVersion)
 	}
@@ -105,17 +119,23 @@ func loadState(home string) (*State, error) {
 	if errors.Is(err, os.ErrNotExist) {
 		return s, nil
 	}
+
 	if err != nil {
 		return nil, err
 	}
+
 	var af accountsFile
+
 	if err := json.Unmarshal(data, &af); err != nil {
 		return nil, fmt.Errorf("read %s: %w", s.accountsPath(), err)
 	}
+
 	if af.Version != stateVersion {
 		return nil, fmt.Errorf("%s has version %d; this csm understands version %d", s.accountsPath(), af.Version, stateVersion)
 	}
+
 	s.Accounts = af.Accounts
+
 	return s, nil
 }
 
@@ -123,6 +143,7 @@ func (s *State) save() error {
 	if err := writeJSON(s.configPath(), s.Config); err != nil {
 		return err
 	}
+
 	return writeJSON(s.accountsPath(), accountsFile{Version: stateVersion, Accounts: s.Accounts})
 }
 
@@ -132,10 +153,13 @@ func writeJSON(path string, v any) error {
 	if err != nil {
 		return err
 	}
+
 	tmp := path + ".tmp"
+
 	if err := os.WriteFile(tmp, append(data, '\n'), 0o600); err != nil {
 		return err
 	}
+
 	return os.Rename(tmp, path)
 }
 
@@ -144,9 +168,11 @@ func readJSON(path string, v any) error {
 	if err != nil {
 		return err
 	}
+
 	if err := json.Unmarshal(data, v); err != nil {
 		return fmt.Errorf("read %s: %w", path, err)
 	}
+
 	return nil
 }
 
@@ -154,6 +180,7 @@ func providerOrDefault(id string) string {
 	if id == "" {
 		return provider.ClaudeID
 	}
+
 	return id
 }
 
@@ -163,17 +190,21 @@ func (s *State) active(providerID string) string {
 	if providerID == provider.ClaudeID {
 		return s.Config.ActiveAccount
 	}
+
 	return s.Config.ActiveByProvider[providerID]
 }
 
 func (s *State) setActive(providerID, name string) {
 	if providerID == provider.ClaudeID {
 		s.Config.ActiveAccount = name
+
 		return
 	}
+
 	if s.Config.ActiveByProvider == nil {
 		s.Config.ActiveByProvider = map[string]string{}
 	}
+
 	s.Config.ActiveByProvider[providerID] = name
 }
 
@@ -184,21 +215,25 @@ func (s *State) accountNames(providerID string) []string {
 
 func (s *State) namesOf(providerID string, names []string) []string {
 	var group []string
+
 	for _, name := range names {
 		if a, err := s.resolveAccount(name); err == nil && a.providerID() == providerID {
 			group = append(group, name)
 		}
 	}
+
 	return group
 }
 
 func (s *State) providersInUse() []string {
 	var ids []string
+
 	for _, id := range provider.IDs {
 		if len(s.accountNames(id)) > 0 {
 			ids = append(ids, id)
 		}
 	}
+
 	return ids
 }
 
@@ -208,13 +243,16 @@ func (s *State) resolveAccount(nameOrIndex string) (*Account, error) {
 		if n < 1 || n > len(s.Config.AccountOrder) {
 			return nil, fmt.Errorf("no account at position %d; run: csm accounts", n)
 		}
+
 		nameOrIndex = s.Config.AccountOrder[n-1]
 	}
+
 	for i := range s.Accounts {
 		if s.Accounts[i].Name == nameOrIndex {
 			return &s.Accounts[i], nil
 		}
 	}
+
 	return nil, fmt.Errorf("no account named %q; run: csm accounts", nameOrIndex)
 }
 
@@ -222,9 +260,11 @@ func (s *State) addAccount(providerID, name string, now time.Time) (*Account, er
 	if !accountNamePattern.MatchString(name) {
 		return nil, fmt.Errorf("invalid account name %q: use lowercase letters, digits, - or _ (max 32)", name)
 	}
+
 	if _, err := s.resolveAccount(name); err == nil {
 		return nil, fmt.Errorf("account %q already exists", name)
 	}
+
 	s.Accounts = append(s.Accounts, Account{
 		Name:      name,
 		Provider:  providerID,
@@ -233,9 +273,11 @@ func (s *State) addAccount(providerID, name string, now time.Time) (*Account, er
 		CreatedAt: now,
 	})
 	s.Config.AccountOrder = append(s.Config.AccountOrder, name)
+
 	if s.active(providerID) == "" {
 		s.setActive(providerID, name)
 	}
+
 	return &s.Accounts[len(s.Accounts)-1], nil
 }
 
@@ -244,16 +286,21 @@ func (s *State) removeAccount(name string) error {
 	if i < 0 {
 		return fmt.Errorf("no account named %q", name)
 	}
+
 	providerID := s.Accounts[i].providerID()
 	s.Accounts = slices.Delete(s.Accounts, i, i+1)
 	s.Config.AccountOrder = slices.DeleteFunc(s.Config.AccountOrder, func(n string) bool { return n == name })
+
 	if s.active(providerID) == name {
 		next := ""
+
 		if remaining := s.accountNames(providerID); len(remaining) > 0 {
 			next = remaining[0]
 		}
+
 		s.setActive(providerID, next)
 	}
+
 	return nil
 }
 
@@ -282,20 +329,22 @@ func (a *Account) status(now time.Time) accountStatus {
 func (s *State) nextAccount(providerID, current string, skip map[string]bool, now time.Time) (*Account, error) {
 	order := s.accountNames(providerID)
 	start := slices.Index(order, current)
+
 	for i := 1; i <= len(order); i++ {
 		name := order[(start+i+len(order))%len(order)]
 		if name == current || skip[name] {
 			continue
 		}
+
 		a, err := s.resolveAccount(name)
 		if err != nil {
 			return nil, err
 		}
+
 		if a.status(now) == statusReady {
 			return a, nil
 		}
 	}
+
 	return nil, errNoAccountAvailable
 }
-
-var errNoAccountAvailable = errors.New("all configured accounts are currently unavailable")

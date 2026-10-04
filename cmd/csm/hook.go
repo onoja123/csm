@@ -21,25 +21,30 @@ func runHook(event string, stdin io.Reader) {
 	if stateDir == "" || pid <= 0 {
 		return
 	}
+
 	data, err := io.ReadAll(io.LimitReader(stdin, 1<<20))
 	if err != nil {
 		return
 	}
 
 	var p provider.Claude
+
 	switch event {
 	case "status-line":
 		runStatusLine(data)
+
 	case "session-start":
 		id, err := p.ParseSessionStart(data)
 		if err == nil && id != "" {
 			writeJSON(filepath.Join(stateDir, providerSessionFile), providerSession{SessionID: id})
 		}
+
 	case "failure":
 		f, err := p.ParseFailure(data)
 		if err != nil {
 			return
 		}
+
 		if writeJSON(filepath.Join(stateDir, eventFile), f) == nil {
 			syscall.Kill(pid, syscall.SIGUSR1)
 		}
@@ -60,11 +65,15 @@ func runStatusLine(data []byte) {
 		cmd.Stdin = bytes.NewReader(data)
 		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 		cmd.Run()
+
 		return
 	}
+
 	line := "csm · " + account
+
 	if summary := shortUsage(usage, now); summary != "" {
 		line += " · " + summary
 	}
+
 	fmt.Println(line)
 }
