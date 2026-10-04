@@ -42,19 +42,13 @@ type Provider interface {
 	HasSessionFlag(args []string) bool
 	NewSessionArgs(f Features, sessionID, handoffNote string) []string
 	// CurrentSession is for agents that cannot push their session ID to csm; the others return "".
-	CurrentSession(profileDir, cwd string, since time.Time) string
-	CarrySession(fromProfile, toProfile, sessionID string) (Carried, error)
+	CurrentSession(profileDir, cwd string, since time.Time) (string, error)
+	// CarrySession returns no resumeArgs when the session cannot be carried, and no newSessionID when the agent resumes it under an ID csm cannot know.
+	CarrySession(fromProfile, toProfile, sessionID string) (resumeArgs []string, newSessionID string, err error)
 	FetchUsage(ctx context.Context, profileDir string) (Usage, error)
 	UsageCheckNote() string
 	// LimitPollInterval is non-zero for agents that have no failure hook, so limits are found by polling usage.
 	LimitPollInterval() time.Duration
-}
-
-// Carried is how to resume a session in another profile; no Args means it could not be carried.
-type Carried struct {
-	Args []string
-	// SessionID is empty when the agent gives the resumed session a new ID.
-	SessionID string
 }
 
 // New returns a provider without looking for its executable; an empty ID means Claude Code.

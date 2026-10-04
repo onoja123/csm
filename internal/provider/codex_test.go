@@ -62,9 +62,6 @@ func TestCodexLimited(t *testing.T) {
 
 func TestCodexArgs(t *testing.T) {
 	c := Codex{}
-	if got := c.ResumeArgs("sid"); !slices.Equal(got, []string{"resume", "sid"}) {
-		t.Fatalf("resume args = %v", got)
-	}
 	if got := c.NewSessionArgs(Features{SessionID: true, SystemPrompt: true}, "sid", "note"); len(got) != 0 {
 		t.Fatalf("Codex cannot take a session ID or a handoff note, got %v", got)
 	}

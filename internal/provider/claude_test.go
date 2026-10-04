@@ -77,16 +77,16 @@ func TestCarrySession(t *testing.T) {
 	os.WriteFile(filepath.Join(project, "sid.jsonl"), []byte("line\n"), 0o600)
 	os.WriteFile(filepath.Join(project, "sid", "subagents", "a.jsonl"), []byte("sub\n"), 0o600)
 
-	carried, err := Claude{}.CarrySession(from, to, "sid")
-	if err != nil || !slices.Equal(carried.Args, []string{"--resume", "sid"}) || carried.SessionID != "sid" {
-		t.Fatalf("carried=%+v err=%v", carried, err)
+	resumeArgs, sessionID, err := Claude{}.CarrySession(from, to, "sid")
+	if err != nil || !slices.Equal(resumeArgs, []string{"--resume", "sid"}) || sessionID != "sid" {
+		t.Fatalf("resumeArgs=%v sessionID=%q err=%v", resumeArgs, sessionID, err)
 	}
 	for _, rel := range []string{"sid.jsonl", "sid/subagents/a.jsonl"} {
 		if _, err := os.Stat(filepath.Join(to, "projects", "-Users-x-polishpad", rel)); err != nil {
 			t.Fatalf("missing %s: %v", rel, err)
 		}
 	}
-	if carried, _ := (Claude{}).CarrySession(from, to, "missing"); len(carried.Args) > 0 {
+	if resumeArgs, _, _ := (Claude{}).CarrySession(from, to, "missing"); len(resumeArgs) > 0 {
 		t.Fatal("carried a transcript that does not exist")
 	}
 }

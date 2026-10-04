@@ -198,10 +198,8 @@ func (c Claude) UsageCheckNote() string {
 
 func (c Claude) LimitPollInterval() time.Duration { return 0 }
 
-func (c Claude) CurrentSession(profileDir, cwd string, since time.Time) string { return "" }
-
-func (c Claude) ResumeArgs(sessionID string) []string {
-	return []string{"--resume", sessionID}
+func (c Claude) CurrentSession(profileDir, cwd string, since time.Time) (string, error) {
+	return "", nil
 }
 
 func (c Claude) NewSessionArgs(f Features, sessionID, handoffNote string) []string {
@@ -287,23 +285,23 @@ func classifyClaudeFailure(errorType, text string) StopReason {
 }
 
 // CarrySession copies a transcript, kept at <profile>/projects/<project>/<id>.jsonl plus an optional <id>/ dir.
-func (c Claude) CarrySession(fromProfile, toProfile, sessionID string) (Carried, error) {
+func (c Claude) CarrySession(fromProfile, toProfile, sessionID string) ([]string, string, error) {
 	matches, err := filepath.Glob(filepath.Join(fromProfile, "projects", "*", sessionID+".jsonl"))
 	if err != nil || len(matches) == 0 {
-		return Carried{}, err
+		return nil, "", err
 	}
 	src := matches[0]
 	dstProject := filepath.Join(toProfile, "projects", filepath.Base(filepath.Dir(src)))
 	if err := copyFile(src, filepath.Join(dstProject, sessionID+".jsonl")); err != nil {
-		return Carried{}, err
+		return nil, "", err
 	}
 	srcExtra := filepath.Join(filepath.Dir(src), sessionID)
 	if _, err := os.Stat(srcExtra); err == nil {
 		if err := copyTree(srcExtra, filepath.Join(dstProject, sessionID)); err != nil {
-			return Carried{}, err
+			return nil, "", err
 		}
 	}
-	return Carried{Args: c.ResumeArgs(sessionID), SessionID: sessionID}, nil
+	return []string{"--resume", sessionID}, sessionID, nil
 }
 
 // LinkUserConfig symlinks ~/.claude settings into a profile; ~/.claude itself is never modified.

@@ -152,9 +152,12 @@ type geminiSession struct {
 	}
 }
 
-// geminiSessions reads the first record of each session file, kept at <profile>/.gemini/tmp/<project>/chats/.
-func geminiSessions(profileDir string) []geminiSession {
-	paths, _ := filepath.Glob(filepath.Join(geminiDir(profileDir), "tmp", "*", "chats", "session-*.json*"))
+// geminiSessions reads the first record of each session file, kept at <profile>/.gemini/tmp/<project>/chats/, newest first.
+func geminiSessions(profileDir string) ([]geminiSession, error) {
+	paths, err := filepath.Glob(filepath.Join(geminiDir(profileDir), "tmp", "*", "chats", "session-*.json*"))
+	if err != nil {
+		return nil, err
+	}
 	var sessions []geminiSession
 	for _, path := range paths {
 		f, err := os.Open(path)
@@ -172,7 +175,7 @@ func geminiSessions(profileDir string) []geminiSession {
 		sessions = append(sessions, s)
 	}
 	slices.SortFunc(sessions, func(a, b geminiSession) int { return b.updated.Compare(a.updated) })
-	return sessions
+	return sessions, nil
 }
 
 // Gemini CLI names a project by the SHA-256 of the directory it was started in.
@@ -182,30 +185,38 @@ func geminiProjectHash(dir string) string {
 }
 
 // CurrentSession is the session most recently written for cwd since the agent started.
-func (g Gemini) CurrentSession(profileDir, cwd string, since time.Time) string {
+func (g Gemini) CurrentSession(profileDir, cwd string, since time.Time) (string, error) {
 	hashes := []string{geminiProjectHash(cwd)}
 	if real, err := filepath.EvalSymlinks(cwd); err == nil && real != cwd {
 		hashes = append(hashes, geminiProjectHash(real))
 	}
-	for _, s := range geminiSessions(profileDir) {
+	sessions, err := geminiSessions(profileDir)
+	if err != nil {
+		return "", err
+	}
+	for _, s := range sessions {
 		if s.updated.Before(since.Truncate(time.Second)) {
 			break
 		}
 		if slices.Contains(hashes, s.meta.ProjectHash) {
-			return s.meta.SessionID
+			return s.meta.SessionID, nil
 		}
 	}
-	return ""
+	return "", nil
 }
 
 // CarrySession copies nothing: the target profile imports the session file with --session-file, under a new ID.
-func (g Gemini) CarrySession(fromProfile, toProfile, sessionID string) (Carried, error) {
-	for _, s := range geminiSessions(fromProfile) {
+func (g Gemini) CarrySession(fromProfile, toProfile, sessionID string) ([]string, string, error) {
+	sessions, err := geminiSessions(fromProfile)
+	if err != nil {
+		return nil, "", err
+	}
+	for _, s := range sessions {
 		if s.meta.SessionID == sessionID {
-			return Carried{Args: []string{"--session-file", s.path}}, nil
+			return []string{"--session-file", s.path}, "", nil
 		}
 	}
-	return Carried{}, nil
+	return nil, "", nil
 }
 
 func (g Gemini) FetchUsage(ctx context.Context, profileDir string) (Usage, error) {

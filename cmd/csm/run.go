@@ -285,7 +285,11 @@ func (r *runner) currentSessionID(acct *Account, since time.Time, fallback strin
 	if readJSON(filepath.Join(r.stateDir, providerSessionFile), &cs) == nil && cs.SessionID != "" {
 		return cs.SessionID
 	}
-	if id := r.provider.CurrentSession(acct.ConfigDir, r.cwd, since); id != "" {
+	id, err := r.provider.CurrentSession(acct.ConfigDir, r.cwd, since)
+	if err != nil {
+		slog.Debug("find current session", "err", err)
+	}
+	if id != "" {
 		return id
 	}
 	return fallback
@@ -417,12 +421,12 @@ func (r *runner) switchAccount(from *Account, to string, res outcome) ([]string,
 // Falls back to a fresh session with a handoff note when the transcript is missing.
 func (r *runner) handoffArgs(from, to *Account, sessionID string) (args []string, sessionIDOut string, resumed bool) {
 	if sessionID != "" && r.features.CanContinue() {
-		carried, err := r.provider.CarrySession(from.ConfigDir, to.ConfigDir, sessionID)
+		resumeArgs, newSessionID, err := r.provider.CarrySession(from.ConfigDir, to.ConfigDir, sessionID)
 		if err != nil {
 			slog.Debug("carry session", "err", err)
 		}
-		if len(carried.Args) > 0 {
-			return carried.Args, carried.SessionID, true
+		if len(resumeArgs) > 0 {
+			return resumeArgs, newSessionID, true
 		}
 	}
 	if r.features.SessionID {

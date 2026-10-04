@@ -51,29 +51,29 @@ func TestCopilotSessions(t *testing.T) {
 	}
 
 	session("old", "id: old\ncwd: "+cwd+"\n", start.Add(-time.Minute))
-	if id := c.CurrentSession(from, cwd, start); id != "" {
+	if id, _ := c.CurrentSession(from, cwd, start); id != "" {
 		t.Fatalf("picked %q, which was last written before the agent started", id)
 	}
 	session("current", "id: current\ncwd: \""+cwd+"\"\n", start.Add(time.Minute))
 	session("elsewhere", "id: elsewhere\ncwd: /Users/x/other\n", start.Add(2*time.Minute))
 	session("unknown-layout", "something: else\n", start.Add(3*time.Minute))
-	if id := c.CurrentSession(from, cwd, start); id != "current" {
-		t.Fatalf("current session = %q", id)
+	if id, err := c.CurrentSession(from, cwd, start); id != "current" || err != nil {
+		t.Fatalf("current session = %q (%v)", id, err)
 	}
 
-	carried, err := c.CarrySession(from, to, "current")
-	if err != nil || !slices.Equal(carried.Args, []string{"--resume", "current"}) || carried.SessionID != "current" {
-		t.Fatalf("carried = %+v, %v", carried, err)
+	resumeArgs, sessionID, err := c.CarrySession(from, to, "current")
+	if err != nil || !slices.Equal(resumeArgs, []string{"--resume", "current"}) || sessionID != "current" {
+		t.Fatalf("resumeArgs=%v sessionID=%q err=%v", resumeArgs, sessionID, err)
 	}
 	for _, rel := range []string{"workspace.yaml", "events.jsonl", "checkpoints/1.md"} {
 		if _, err := os.Stat(filepath.Join(copilotSessionDir(to, "current"), rel)); err != nil {
 			t.Fatalf("missing %s: %v", rel, err)
 		}
 	}
-	if carried, _ := c.CarrySession(from, to, "missing"); len(carried.Args) != 0 {
+	if resumeArgs, _, _ := c.CarrySession(from, to, "missing"); len(resumeArgs) != 0 {
 		t.Fatal("carried a session that does not exist")
 	}
-	if _, err := c.CarrySession(from, to, "../current"); err == nil {
+	if _, _, err := c.CarrySession(from, to, "../current"); err == nil {
 		t.Fatal("a session ID with a path in it was accepted")
 	}
 }

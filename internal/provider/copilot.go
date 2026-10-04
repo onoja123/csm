@@ -165,21 +165,20 @@ func (c Copilot) NewSessionArgs(f Features, sessionID, handoffNote string) []str
 	return []string{"--session-id", sessionID}
 }
 
-func (c Copilot) ResumeArgs(sessionID string) []string {
-	return []string{"--resume", sessionID}
-}
-
 func copilotSessionDir(profileDir, sessionID string) string {
 	return filepath.Join(profileDir, "session-state", sessionID)
 }
 
 // CurrentSession is the session folder most recently written since the agent started whose workspace.yaml names cwd.
-func (c Copilot) CurrentSession(profileDir, cwd string, since time.Time) string {
+func (c Copilot) CurrentSession(profileDir, cwd string, since time.Time) (string, error) {
 	cwds := []string{cwd}
 	if real, err := filepath.EvalSymlinks(cwd); err == nil && real != cwd {
 		cwds = append(cwds, real)
 	}
-	dirs, _ := filepath.Glob(copilotSessionDir(profileDir, "*"))
+	dirs, err := filepath.Glob(copilotSessionDir(profileDir, "*"))
+	if err != nil {
+		return "", err
+	}
 	newest, newestAt := "", since.Truncate(time.Second)
 	for _, dir := range dirs {
 		updated := modTime(dir)
@@ -191,7 +190,7 @@ func (c Copilot) CurrentSession(profileDir, cwd string, since time.Time) string 
 		}
 		newest, newestAt = filepath.Base(dir), updated
 	}
-	return newest
+	return newest, nil
 }
 
 func modTime(path string) time.Time {
@@ -217,18 +216,18 @@ func copilotSessionIn(sessionDir string, cwds []string) bool {
 }
 
 // CarrySession copies a session's folder, kept at <profile>/session-state/<id>, to the same place in another profile.
-func (c Copilot) CarrySession(fromProfile, toProfile, sessionID string) (Carried, error) {
+func (c Copilot) CarrySession(fromProfile, toProfile, sessionID string) ([]string, string, error) {
 	if sessionID != filepath.Base(sessionID) {
-		return Carried{}, fmt.Errorf("unexpected Copilot CLI session ID %q", sessionID)
+		return nil, "", fmt.Errorf("unexpected Copilot CLI session ID %q", sessionID)
 	}
 	src := copilotSessionDir(fromProfile, sessionID)
 	if fi, err := os.Stat(src); err != nil || !fi.IsDir() {
-		return Carried{}, nil
+		return nil, "", nil
 	}
 	if err := copyTree(src, copilotSessionDir(toProfile, sessionID)); err != nil {
-		return Carried{}, err
+		return nil, "", err
 	}
-	return Carried{Args: c.ResumeArgs(sessionID), SessionID: sessionID}, nil
+	return []string{"--resume", sessionID}, sessionID, nil
 }
 
 func (c Copilot) FetchUsage(ctx context.Context, profileDir string) (Usage, error) {

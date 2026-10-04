@@ -206,11 +206,11 @@ func TestCodexProfileAndUsage(t *testing.T) {
 	if rec, _ := s.loadUsage("limited"); !rec.Usage.Limited {
 		t.Fatalf("limited = %+v", rec)
 	}
-	if id := p.CurrentSession(work.ConfigDir, t.TempDir(), time.Now()); id != "" {
-		t.Fatalf("found session %q in a profile with none", id)
+	if id, err := p.CurrentSession(work.ConfigDir, t.TempDir(), time.Now()); id != "" || err != nil {
+		t.Fatalf("found session %q in a profile with none (%v)", id, err)
 	}
-	if carried, err := p.CarrySession(work.ConfigDir, limited.ConfigDir, "missing"); len(carried.Args) > 0 || err == nil {
-		t.Fatalf("carried a session that does not exist: %v %v", carried, err)
+	if resumeArgs, _, err := p.CarrySession(work.ConfigDir, limited.ConfigDir, "missing"); len(resumeArgs) > 0 || err == nil {
+		t.Fatalf("carried a session that does not exist: %v %v", resumeArgs, err)
 	}
 }
 

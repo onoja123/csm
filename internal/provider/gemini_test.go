@@ -52,29 +52,32 @@ func TestGeminiSessions(t *testing.T) {
 	hash := geminiProjectHash(cwd)
 	g := Gemini{}
 
-	if id := g.CurrentSession(from, cwd, start); id != "" {
-		t.Fatalf("found %q in an empty profile", id)
+	if id, err := g.CurrentSession(from, cwd, start); id != "" || err != nil {
+		t.Fatalf("found %q in an empty profile (%v)", id, err)
 	}
 	writeGeminiSession(t, from, "polishpad", "session-1-aaaaaaaa.jsonl", `{"sessionId":"aaaaaaaa-old","projectHash":"`+hash+`"}`, start.Add(-time.Minute))
-	if id := g.CurrentSession(from, cwd, start); id != "" {
+	if id, _ := g.CurrentSession(from, cwd, start); id != "" {
 		t.Fatalf("picked %q, which was last written before the agent started", id)
 	}
 	want := writeGeminiSession(t, from, "polishpad", "session-2-bbbbbbbb.jsonl", `{"sessionId":"bbbbbbbb-current","projectHash":"`+hash+`"}`, start.Add(time.Minute))
 	writeGeminiSession(t, from, "polishpad", "session-3-cccccccc.jsonl", `{"sessionId":"cccccccc-sub","projectHash":"`+hash+`","kind":"subagent"}`, start.Add(2*time.Minute))
 	writeGeminiSession(t, from, "other", "session-4-dddddddd.jsonl", `{"sessionId":"dddddddd-other","projectHash":"`+geminiProjectHash("/Users/x/other")+`"}`, start.Add(3*time.Minute))
-	if id := g.CurrentSession(from, cwd, start); id != "bbbbbbbb-current" {
-		t.Fatalf("current session = %q", id)
+	if id, err := g.CurrentSession(from, cwd, start); id != "bbbbbbbb-current" || err != nil {
+		t.Fatalf("current session = %q (%v)", id, err)
 	}
 
-	carried, err := g.CarrySession(from, to, "bbbbbbbb-current")
-	if err != nil || !slices.Equal(carried.Args, []string{"--session-file", want}) || carried.SessionID != "" {
-		t.Fatalf("carried = %+v, %v", carried, err)
+	resumeArgs, newSessionID, err := g.CarrySession(from, to, "bbbbbbbb-current")
+	if err != nil || !slices.Equal(resumeArgs, []string{"--session-file", want}) || newSessionID != "" {
+		t.Fatalf("resumeArgs=%v newSessionID=%q err=%v", resumeArgs, newSessionID, err)
 	}
 	if entries, _ := os.ReadDir(to); len(entries) != 0 {
 		t.Fatal("carrying a Gemini session must not write into the target profile")
 	}
-	if carried, _ := g.CarrySession(from, to, "missing"); len(carried.Args) != 0 {
+	if resumeArgs, _, _ := g.CarrySession(from, to, "missing"); len(resumeArgs) != 0 {
 		t.Fatal("carried a session that does not exist")
+	}
+	if _, err := g.CurrentSession(filepath.Join(from, "[bad"), cwd, start); err == nil {
+		t.Fatal("a profile path that breaks the file search was reported as having no session")
 	}
 }
 

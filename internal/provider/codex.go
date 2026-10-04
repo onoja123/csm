@@ -258,10 +258,6 @@ func (c Codex) HasSessionFlag(args []string) bool {
 
 func (c Codex) NewSessionArgs(f Features, sessionID, handoffNote string) []string { return nil }
 
-func (c Codex) ResumeArgs(sessionID string) []string {
-	return []string{"resume", sessionID}
-}
-
 type codexThread struct {
 	ID          string `json:"id"`
 	Path        string `json:"path"`
@@ -289,48 +285,48 @@ type codexThreadRead struct {
 }
 
 // CurrentSession is the interactive thread most recently updated in cwd since the agent started.
-func (c Codex) CurrentSession(profileDir, cwd string, since time.Time) string {
+func (c Codex) CurrentSession(profileDir, cwd string, since time.Time) (string, error) {
 	cwds := []string{cwd}
 	if real, err := filepath.EvalSymlinks(cwd); err == nil && real != cwd {
 		cwds = append(cwds, real)
 	}
 	var res codexThreadList
 	params := codexThreadListParams{Cwd: cwds, SortKey: "updated_at", Limit: 1}
-	if _, err := c.call(profileDir, "thread/list", params, &res); err != nil || len(res.Data) == 0 {
-		return ""
+	if _, err := c.call(profileDir, "thread/list", params, &res); err != nil {
+		return "", err
 	}
-	if res.Data[0].UpdatedAt < since.Unix() {
-		return ""
+	if len(res.Data) == 0 || res.Data[0].UpdatedAt < since.Unix() {
+		return "", nil
 	}
-	return res.Data[0].ID
+	return res.Data[0].ID, nil
 }
 
 // CarrySession copies a session's rollout file, kept under <profile>/sessions, to the same place in another profile.
-func (c Codex) CarrySession(fromProfile, toProfile, sessionID string) (Carried, error) {
+func (c Codex) CarrySession(fromProfile, toProfile, sessionID string) ([]string, string, error) {
 	var res codexThreadRead
 	if _, err := c.call(fromProfile, "thread/read", codexThreadReadParams{ThreadID: sessionID, IncludeTurns: false}, &res); err != nil {
-		return Carried{}, err
+		return nil, "", err
 	}
 	// Paginated history lives in a database, so the rollout file alone would resume as an empty session.
 	if res.Thread.Path == "" || res.Thread.HistoryMode == "paginated" {
-		return Carried{}, fmt.Errorf("codex session %s is not stored as a single rollout file", sessionID)
+		return nil, "", fmt.Errorf("codex session %s is not stored as a single rollout file", sessionID)
 	}
 	root, err := filepath.EvalSymlinks(fromProfile)
 	if err != nil {
-		return Carried{}, err
+		return nil, "", err
 	}
 	src, err := filepath.EvalSymlinks(res.Thread.Path)
 	if err != nil {
-		return Carried{}, err
+		return nil, "", err
 	}
 	rel, err := filepath.Rel(root, src)
 	if err != nil || !filepath.IsLocal(rel) {
-		return Carried{}, fmt.Errorf("codex session %s is stored outside its profile at %s", sessionID, src)
+		return nil, "", fmt.Errorf("codex session %s is stored outside its profile at %s", sessionID, src)
 	}
 	if err := copyFile(src, filepath.Join(toProfile, rel)); err != nil {
-		return Carried{}, err
+		return nil, "", err
 	}
-	return Carried{Args: c.ResumeArgs(sessionID), SessionID: sessionID}, nil
+	return []string{"resume", sessionID}, sessionID, nil
 }
 
 func (c Codex) UsageCheckNote() string {
