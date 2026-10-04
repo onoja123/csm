@@ -75,8 +75,8 @@ type copilotUser struct {
 
 // copilotConfig is the part of <profile>/config.json that names the signed-in user; the token itself is kept in the Keychain.
 type copilotConfig struct {
-	LastLoggedInUser    *copilotUser `json:"lastLoggedInUser"`
-	LastLoggedInUserOld *copilotUser `json:"last_logged_in_user"`
+	LastLoggedInUser    copilotUser `json:"lastLoggedInUser"`
+	LastLoggedInUserOld copilotUser `json:"last_logged_in_user"`
 }
 
 // Identity reads the user Copilot CLI records at sign-in; Copilot CLI has no command that reports it.
@@ -94,10 +94,10 @@ func (c Copilot) Identity(profileDir string) (Identity, error) {
 		return id, fmt.Errorf("read Copilot CLI config: %w", err)
 	}
 	user := cfg.LastLoggedInUser
-	if user == nil {
+	if user.Login == "" {
 		user = cfg.LastLoggedInUserOld
 	}
-	if user == nil || user.Login == "" {
+	if user.Login == "" {
 		return id, nil
 	}
 	id.LoggedIn, id.Email = true, user.Login
