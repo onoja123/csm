@@ -26,6 +26,8 @@ type failoverResult struct {
 }
 
 type scenario struct {
+	// provider is empty for Claude Code.
+	provider  string
 	limited   string
 	fakeError string
 	hold      string
@@ -59,23 +61,27 @@ func runFailoverScenario(csmPath string, sc scenario) (failoverResult, error) {
 	os.WriteFile(filepath.Join(project, "main.go"), []byte("package main // uncommitted\n"), 0o600)
 	res.gitBefore, _ = git("status", "--short", "--branch")
 
-	shim := filepath.Join(tmp, "claude")
-	script := fmt.Sprintf("#!/bin/sh\nexec '%s' __fake-claude \"$@\"\n", strings.ReplaceAll(csmPath, "'", `'\''`))
+	providerID := providerOrDefault(sc.provider)
+	shim := filepath.Join(tmp, providerID)
+	script := fmt.Sprintf("#!/bin/sh\nexec '%s' __fake-%s \"$@\"\n", strings.ReplaceAll(csmPath, "'", `'\''`), providerID)
 	if err := os.WriteFile(shim, []byte(script), 0o700); err != nil {
 		return res, err
 	}
-	for key, value := range map[string]string{"CSM_CLAUDE": shim, "CSM_FAKE_LIMIT": sc.limited, "CSM_FAKE_ERROR": sc.fakeError, "CSM_FAKE_HOLD": sc.hold} {
+	for key, value := range map[string]string{"CSM_" + strings.ToUpper(providerID): shim, "CSM_FAKE_LIMIT": sc.limited, "CSM_FAKE_ERROR": sc.fakeError, "CSM_FAKE_HOLD": sc.hold} {
 		defer os.Setenv(key, os.Getenv(key))
 		os.Setenv(key, value)
 	}
 
-	p := provider.Claude{Path: shim}
+	p, err := provider.New(providerID, shim)
+	if err != nil {
+		return res, err
+	}
 	s, err := initState(filepath.Join(tmp, "csm"))
 	if err != nil {
 		return res, err
 	}
 	for _, name := range []string{"alpha", "beta"} {
-		a, err := s.addAccount(name, time.Now())
+		a, err := s.addAccount(providerID, name, time.Now())
 		if err != nil {
 			return res, err
 		}
@@ -110,7 +116,10 @@ func runFailoverScenario(csmPath string, sc scenario) (failoverResult, error) {
 		in:          bufio.NewReader(strings.NewReader("")),
 		unavailable: map[string]bool{},
 	}
-	r.stateDir = s.projectStateDir(r.project.Dir)
+	if p.LimitPollInterval() > 0 {
+		r.pollInterval = 100 * time.Millisecond
+	}
+	r.stateDir = s.projectStateDir(providerID, r.project.Dir)
 	os.MkdirAll(r.stateDir, 0o700)
 
 	if sc.before != nil {
@@ -124,8 +133,8 @@ func runFailoverScenario(csmPath string, sc scenario) (failoverResult, error) {
 	if err != nil {
 		return res, err
 	}
-	res.active = s.Config.ActiveAccount
-	res.checkpoint, _ = s.loadCheckpoint(r.project.Dir)
+	res.active = s.active(providerID)
+	res.checkpoint, _ = s.loadCheckpoint(providerID, r.project.Dir)
 	res.gitAfter, _ = git("status", "--short", "--branch")
 	res.usage = map[string]UsageRecord{}
 	for _, name := range s.Config.AccountOrder {
@@ -134,27 +143,37 @@ func runFailoverScenario(csmPath string, sc scenario) (failoverResult, error) {
 		}
 	}
 	if res.checkpoint.SessionID != "" {
-		matches, _ := filepath.Glob(filepath.Join(s.accountsDir(), "beta", "projects", "*", res.checkpoint.SessionID+".jsonl"))
-		if len(matches) == 1 {
-			data, _ := os.ReadFile(matches[0])
-			res.resumed = strings.Contains(string(data), `"profile":"beta","resumed":true`)
+		transcript := filepath.Join("projects", "*", res.checkpoint.SessionID+".jsonl")
+		switch providerID {
+		case provider.CodexID:
+			transcript = filepath.Join("sessions", "*", "*", "*", "rollout-*-"+res.checkpoint.SessionID+".jsonl")
+		case provider.CopilotID:
+			transcript = filepath.Join("session-state", res.checkpoint.SessionID, "events.jsonl")
+		case provider.GeminiID:
+			// Gemini CLI imports a carried session under a new ID.
+			transcript = filepath.Join(".gemini", "tmp", "*", "chats", "session-*.jsonl")
+		}
+		matches, _ := filepath.Glob(filepath.Join(s.accountsDir(), "beta", transcript))
+		for _, match := range matches {
+			data, _ := os.ReadFile(match)
+			res.resumed = res.resumed || strings.Contains(string(data), `"profile":"beta","resumed":true`)
 		}
 	}
-	if _, ok, _ := s.loadTransition(r.project.Dir); ok {
+	if _, ok, _ := s.loadTransition(providerID, r.project.Dir); ok {
 		return res, errors.New("transition record left behind after a completed switch")
 	}
 	return res, nil
 }
 
-func cmdTestFailover() error {
+func cmdTestFailover(providerID string) error {
 	csmPath, err := os.Executable()
 	if err != nil {
 		return err
 	}
-	fmt.Println("Simulating failover with a fake Claude Code (no real usage)...")
+	fmt.Printf("Simulating failover with a fake %s (no real usage)...\n", providerName(providerID))
 	fmt.Println()
 
-	res, err := runFailoverScenario(csmPath, scenario{limited: "alpha"})
+	res, err := runFailoverScenario(csmPath, scenario{provider: providerID, limited: "alpha"})
 	if err != nil {
 		return fmt.Errorf("FAIL: %w\n\n%s", err, res.output)
 	}
@@ -172,7 +191,7 @@ func cmdTestFailover() error {
 		failures = append(failures, fmt.Sprintf("git state changed:\n%s\n→\n%s", res.gitBefore, res.gitAfter))
 	}
 
-	exhausted, err := runFailoverScenario(csmPath, scenario{limited: "alpha,beta"})
+	exhausted, err := runFailoverScenario(csmPath, scenario{provider: providerID, limited: "alpha,beta"})
 	if err != nil {
 		return fmt.Errorf("FAIL: %w\n\n%s", err, exhausted.output)
 	}
@@ -180,12 +199,15 @@ func cmdTestFailover() error {
 		failures = append(failures, "with every account limited, failover did not pause after one pass")
 	}
 
-	network, err := runFailoverScenario(csmPath, scenario{limited: "alpha", fakeError: "overloaded"})
-	if err != nil {
-		return fmt.Errorf("FAIL: %w\n\n%s", err, network.output)
-	}
-	if network.active != "alpha" {
-		failures = append(failures, "a network/overloaded error caused an account switch")
+	// Codex reports no errors to csm, so there is no overloaded error to misread as a limit.
+	if providerID == provider.ClaudeID {
+		network, err := runFailoverScenario(csmPath, scenario{limited: "alpha", fakeError: "overloaded"})
+		if err != nil {
+			return fmt.Errorf("FAIL: %w\n\n%s", err, network.output)
+		}
+		if network.active != "alpha" {
+			failures = append(failures, "a network/overloaded error caused an account switch")
+		}
 	}
 
 	if len(failures) > 0 {
@@ -198,6 +220,8 @@ func cmdTestFailover() error {
 	fmt.Println("session restarted (resumed " + res.checkpoint.SessionID[:8] + " under beta)")
 	fmt.Println("project preserved (branch and uncommitted changes untouched)")
 	fmt.Println("all accounts limited → failover paused, no cycling")
-	fmt.Println("overloaded error → no switch")
+	if providerID == provider.ClaudeID {
+		fmt.Println("overloaded error → no switch")
+	}
 	return nil
 }

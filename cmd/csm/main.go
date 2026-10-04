@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"runtime"
+	"slices"
 
 	"github.com/onoja123/csm/internal/provider"
 )
@@ -17,7 +18,7 @@ var version = "0.1.0"
 
 const usage = `csm - Code Session Manager
 
-A local profile and session manager for coding agents. Supported provider: Claude Code.
+A local profile and session manager for coding agents. Supported providers: Claude Code, Codex, Gemini CLI, GitHub Copilot CLI.
 
 Usage:
   csm [--debug] <command> [arguments]
@@ -26,19 +27,23 @@ Commands:
   setup                    Initialise ~/.csm and check the provider
   doctor                   Diagnose installation, isolation and session support
   status                   Show project, accounts and session state
-  current                  Print the active account name
+  current [provider]       Print the active account name
   accounts                 List accounts and their order
-  account add <name>       Create a profile and log in (--link-settings shares ~/.claude settings)
+  account add <name>       Create a profile and log in
+                           (--provider codex|gemini|copilot for another agent, --link-settings to share your own agent settings)
   account login <name>     Log in to an existing profile again
   account remove <name>    Forget an account (its profile directory is kept)
   account enable <name>    Include an account in switching
   account disable <name>   Exclude an account from switching
   use <name|number>        Make an account active (switches a running session)
-  next                     Move to the next ready account
+  next [provider]          Move to the next ready account
   usage [name...] [--cached]  Check 5-hour and 7-day plan usage per account
   auto on|off|status       Control automatic failover on usage limits
-  claude [args...]         Run Claude Code under the active account
-  test failover            Simulate a failover with a fake Claude Code (no real usage)
+  claude [args...]         Run Claude Code under the active Claude Code account
+  codex [args...]          Run Codex under the active Codex account
+  gemini [args...]         Run Gemini CLI under the active Gemini CLI account
+  copilot [args...]        Run GitHub Copilot CLI under the active Copilot account
+  test failover [codex]    Simulate a failover with a fake agent (no real usage)
   version                  Print version information
 `
 
@@ -56,6 +61,15 @@ func run(args []string) int {
 	}
 	if len(args) > 0 && args[0] == "__fake-claude" {
 		return provider.RunFakeClaude(args[1:])
+	}
+	if len(args) > 0 && args[0] == "__fake-codex" {
+		return provider.RunFakeCodex(args[1:])
+	}
+	if len(args) > 0 && args[0] == "__fake-gemini" {
+		return provider.RunFakeGemini(args[1:])
+	}
+	if len(args) > 0 && args[0] == "__fake-copilot" {
+		return provider.RunFakeCopilot(args[1:])
 	}
 
 	fs := flag.NewFlagSet("csm", flag.ContinueOnError)
@@ -94,7 +108,7 @@ func run(args []string) int {
 	case "status":
 		err = cmdStatus(home)
 	case "current":
-		err = cmdCurrent(home)
+		err = cmdCurrent(home, rest)
 	case "accounts":
 		err = cmdAccounts(home)
 	case "account":
@@ -106,19 +120,23 @@ func run(args []string) int {
 		}
 		err = cmdUse(home, rest[0])
 	case "next":
-		err = cmdNext(home)
+		err = cmdNext(home, rest)
 	case "usage":
 		err = cmdUsage(home, rest)
 	case "auto":
 		err = cmdAuto(home, rest)
-	case "claude":
-		code, err = cmdClaude(home, rest)
+	case provider.ClaudeID, provider.CodexID, provider.GeminiID, provider.CopilotID:
+		code, err = cmdRun(home, cmd, rest)
 	case "test":
-		if len(rest) != 1 || rest[0] != "failover" {
-			err = errors.New("usage: csm test failover")
+		providerID := provider.ClaudeID
+		if len(rest) == 2 {
+			providerID = rest[1]
+		}
+		if len(rest) < 1 || len(rest) > 2 || rest[0] != "failover" || !slices.Contains([]string{provider.ClaudeID, provider.CodexID}, providerID) {
+			err = errors.New("usage: csm test failover [codex]")
 			break
 		}
-		err = cmdTestFailover()
+		err = cmdTestFailover(providerID)
 	case "help", "-h", "--help":
 		fmt.Print(usage)
 	default:

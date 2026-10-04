@@ -24,14 +24,14 @@ func TestCheckpointRoundTrip(t *testing.T) {
 	if err := s.saveCheckpoint(c); err != nil {
 		t.Fatal(err)
 	}
-	got, err := s.loadCheckpoint(c.ProjectDir)
+	got, err := s.loadCheckpoint(provider.ClaudeID, c.ProjectDir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got != c {
 		t.Fatalf("got %+v, want %+v", got, c)
 	}
-	history, _ := filepath.Glob(filepath.Join(s.projectStateDir(c.ProjectDir), historyDir, "*.json"))
+	history, _ := filepath.Glob(filepath.Join(s.projectStateDir(provider.ClaudeID, c.ProjectDir), historyDir, "*.json"))
 	if len(history) != 1 {
 		t.Fatalf("history entries = %d, want 1", len(history))
 	}
@@ -39,27 +39,27 @@ func TestCheckpointRoundTrip(t *testing.T) {
 
 func TestLoadCheckpointInvalid(t *testing.T) {
 	s := newTestState(t)
-	dir := s.projectStateDir("/work/x")
+	dir := s.projectStateDir(provider.ClaudeID, "/work/x")
 	os.MkdirAll(dir, 0o700)
 	os.WriteFile(filepath.Join(dir, checkpointFile), []byte("{"), 0o600)
-	if _, err := s.loadCheckpoint("/work/x"); err == nil {
+	if _, err := s.loadCheckpoint(provider.ClaudeID, "/work/x"); err == nil {
 		t.Fatal("expected error for invalid checkpoint")
 	}
-	if _, err := s.loadCheckpoint("/work/missing"); !os.IsNotExist(err) {
+	if _, err := s.loadCheckpoint(provider.ClaudeID, "/work/missing"); !os.IsNotExist(err) {
 		t.Fatalf("got %v, want not-exist", err)
 	}
 }
 
 func TestTransitionDetectsInterruptedSwitch(t *testing.T) {
 	s := newTestState(t)
-	if _, ok, err := s.loadTransition("/work/p"); ok || err != nil {
+	if _, ok, err := s.loadTransition(provider.ClaudeID, "/work/p"); ok || err != nil {
 		t.Fatalf("unexpected transition: %v %v", ok, err)
 	}
-	dir := s.projectStateDir("/work/p")
+	dir := s.projectStateDir(provider.ClaudeID, "/work/p")
 	os.MkdirAll(dir, 0o700)
 	tr := Transition{Version: stateVersion, ProjectDir: "/work/p", From: "personal", To: "work", CSMPID: 1 << 30}
 	writeJSON(filepath.Join(dir, transitionFile), tr)
-	got, ok, err := s.loadTransition("/work/p")
+	got, ok, err := s.loadTransition(provider.ClaudeID, "/work/p")
 	if err != nil || !ok || got.To != "work" {
 		t.Fatalf("got %+v %v %v", got, ok, err)
 	}
@@ -71,7 +71,7 @@ func TestTransitionDetectsInterruptedSwitch(t *testing.T) {
 func TestLiveSessionsIgnoresDeadProcesses(t *testing.T) {
 	s := newTestState(t)
 	for i, pid := range []int{os.Getpid(), 1 << 30} {
-		dir := s.projectStateDir(filepath.Join("/work", string(rune('a'+i))))
+		dir := s.projectStateDir(provider.ClaudeID, filepath.Join("/work", string(rune('a'+i))))
 		os.MkdirAll(dir, 0o700)
 		writeJSON(filepath.Join(dir, sessionFile), Session{CSMPID: pid, Account: "personal"})
 	}

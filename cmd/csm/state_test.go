@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/onoja123/csm/internal/provider"
 )
 
 var testNow = time.Date(2026, 9, 24, 20, 0, 0, 0, time.UTC)
@@ -19,7 +21,7 @@ func newTestState(t *testing.T, names ...string) *State {
 		t.Fatal(err)
 	}
 	for _, name := range names {
-		a, err := s.addAccount(name, testNow)
+		a, err := s.addAccount(provider.ClaudeID, name, testNow)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -87,11 +89,11 @@ func TestInitStateKeepsExistingConfig(t *testing.T) {
 
 func TestAddAccountRejectsDuplicatesAndBadNames(t *testing.T) {
 	s := newTestState(t, "personal")
-	if _, err := s.addAccount("personal", testNow); err == nil {
+	if _, err := s.addAccount(provider.ClaudeID, "personal", testNow); err == nil {
 		t.Fatal("expected duplicate error")
 	}
 	for _, bad := range []string{"", "Work", "../x", "a b", strings.Repeat("a", 33)} {
-		if _, err := s.addAccount(bad, testNow); err == nil {
+		if _, err := s.addAccount(provider.ClaudeID, bad, testNow); err == nil {
 			t.Fatalf("accepted bad name %q", bad)
 		}
 	}
@@ -170,7 +172,7 @@ func TestNextAccount(t *testing.T) {
 			if tt.setup != nil {
 				tt.setup(s)
 			}
-			got, err := s.nextAccount(tt.current, tt.skip, testNow)
+			got, err := s.nextAccount(provider.ClaudeID, tt.current, tt.skip, testNow)
 			if tt.wantErr {
 				if !errors.Is(err, errNoAccountAvailable) {
 					t.Fatalf("got %v, want errNoAccountAvailable", err)
@@ -184,5 +186,50 @@ func TestNextAccount(t *testing.T) {
 				t.Fatalf("got %s, want %s", got.Name, tt.want)
 			}
 		})
+	}
+}
+
+func TestProvidersKeepSeparateAccounts(t *testing.T) {
+	s := newTestState(t, "personal", "work")
+	for _, name := range []string{"codex-a", "codex-b"} {
+		a, err := s.addAccount(provider.CodexID, name, testNow)
+		if err != nil {
+			t.Fatal(err)
+		}
+		a.VerifiedAt = testNow
+	}
+	if s.active(provider.ClaudeID) != "personal" || s.active(provider.CodexID) != "codex-a" {
+		t.Fatalf("active: claude=%q codex=%q", s.active(provider.ClaudeID), s.active(provider.CodexID))
+	}
+	if got := s.providersInUse(); !slices.Equal(got, []string{provider.ClaudeID, provider.CodexID}) {
+		t.Fatalf("providers in use = %v", got)
+	}
+	next, err := s.nextAccount(provider.CodexID, "codex-b", nil, testNow)
+	if err != nil || next.Name != "codex-a" {
+		t.Fatalf("next Codex account = %v, %v; it must never be a Claude Code account", next, err)
+	}
+	if _, err := s.nextAccount(provider.CodexID, "codex-a", map[string]bool{"codex-b": true}, testNow); !errors.Is(err, errNoAccountAvailable) {
+		t.Fatalf("got %v, want errNoAccountAvailable", err)
+	}
+
+	if err := s.save(); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := loadState(s.Home)
+	if err != nil || loaded.active(provider.CodexID) != "codex-a" || loaded.Accounts[2].providerID() != provider.CodexID {
+		t.Fatalf("not round-tripped: %+v %v", loaded, err)
+	}
+
+	if err := s.removeAccount("codex-a"); err != nil {
+		t.Fatal(err)
+	}
+	if s.active(provider.CodexID) != "codex-b" || s.active(provider.ClaudeID) != "personal" {
+		t.Fatalf("active after remove: claude=%q codex=%q", s.active(provider.ClaudeID), s.active(provider.CodexID))
+	}
+	if s.projectStateDir(provider.ClaudeID, "/work/p") == s.projectStateDir(provider.CodexID, "/work/p") {
+		t.Fatal("providers share one project state directory")
+	}
+	if s.projectStateDir("", "/work/p") != s.projectStateDir(provider.ClaudeID, "/work/p") {
+		t.Fatal("records without a provider must read as Claude Code")
 	}
 }

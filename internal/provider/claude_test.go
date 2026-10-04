@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -49,8 +50,8 @@ func TestParseFailureKeepsSessionAndMessage(t *testing.T) {
 	}
 }
 
-func TestSettingsArgs(t *testing.T) {
-	args := Claude{}.SettingsArgs("/Applications/it's here/csm")
+func TestLaunchArgs(t *testing.T) {
+	args := Claude{}.LaunchArgs("/Applications/it's here/csm")
 	if len(args) != 2 || args[0] != "--settings" {
 		t.Fatalf("args = %v", args)
 	}
@@ -77,15 +78,15 @@ func TestCarrySession(t *testing.T) {
 	os.WriteFile(filepath.Join(project, "sid", "subagents", "a.jsonl"), []byte("sub\n"), 0o600)
 
 	carried, err := Claude{}.CarrySession(from, to, "sid")
-	if err != nil || !carried {
-		t.Fatalf("carried=%v err=%v", carried, err)
+	if err != nil || !slices.Equal(carried.Args, []string{"--resume", "sid"}) || carried.SessionID != "sid" {
+		t.Fatalf("carried=%+v err=%v", carried, err)
 	}
 	for _, rel := range []string{"sid.jsonl", "sid/subagents/a.jsonl"} {
 		if _, err := os.Stat(filepath.Join(to, "projects", "-Users-x-polishpad", rel)); err != nil {
 			t.Fatalf("missing %s: %v", rel, err)
 		}
 	}
-	if carried, _ := (Claude{}).CarrySession(from, to, "missing"); carried {
+	if carried, _ := (Claude{}).CarrySession(from, to, "missing"); len(carried.Args) > 0 {
 		t.Fatal("carried a transcript that does not exist")
 	}
 }

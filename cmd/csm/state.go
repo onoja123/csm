@@ -10,19 +10,25 @@ import (
 	"slices"
 	"strconv"
 	"time"
+
+	"github.com/onoja123/csm/internal/provider"
 )
 
 const stateVersion = 1
 
 type Config struct {
-	Version       int      `json:"version"`
-	ActiveAccount string   `json:"active_account"`
-	AccountOrder  []string `json:"account_order"`
-	AutoFailover  bool     `json:"auto_failover"`
+	Version int `json:"version"`
+	// ActiveAccount is the active Claude Code account; other providers are in ActiveByProvider.
+	ActiveAccount    string            `json:"active_account"`
+	ActiveByProvider map[string]string `json:"active_by_provider,omitempty"`
+	AccountOrder     []string          `json:"account_order"`
+	AutoFailover     bool              `json:"auto_failover"`
 }
 
 type Account struct {
-	Name          string    `json:"name"`
+	Name string `json:"name"`
+	// Provider is empty for accounts created before csm supported more than Claude Code.
+	Provider      string    `json:"provider,omitempty"`
 	Enabled       bool      `json:"enabled"`
 	ConfigDir     string    `json:"config_dir"`
 	CreatedAt     time.Time `json:"created_at"`
@@ -144,6 +150,59 @@ func readJSON(path string, v any) error {
 	return nil
 }
 
+func providerOrDefault(id string) string {
+	if id == "" {
+		return provider.ClaudeID
+	}
+	return id
+}
+
+func (a *Account) providerID() string { return providerOrDefault(a.Provider) }
+
+func (s *State) active(providerID string) string {
+	if providerID == provider.ClaudeID {
+		return s.Config.ActiveAccount
+	}
+	return s.Config.ActiveByProvider[providerID]
+}
+
+func (s *State) setActive(providerID, name string) {
+	if providerID == provider.ClaudeID {
+		s.Config.ActiveAccount = name
+		return
+	}
+	if s.Config.ActiveByProvider == nil {
+		s.Config.ActiveByProvider = map[string]string{}
+	}
+	s.Config.ActiveByProvider[providerID] = name
+}
+
+// accountNames lists one provider's accounts in switching order.
+func (s *State) accountNames(providerID string) []string {
+	return s.namesOf(providerID, s.Config.AccountOrder)
+}
+
+// namesOf keeps the given accounts that belong to one provider.
+func (s *State) namesOf(providerID string, names []string) []string {
+	var group []string
+	for _, name := range names {
+		if a, err := s.resolveAccount(name); err == nil && a.providerID() == providerID {
+			group = append(group, name)
+		}
+	}
+	return group
+}
+
+func (s *State) providersInUse() []string {
+	var ids []string
+	for _, id := range provider.IDs {
+		if len(s.accountNames(id)) > 0 {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
 // resolveAccount accepts an account name or its 1-based position in the order.
 func (s *State) resolveAccount(nameOrIndex string) (*Account, error) {
 	if n, err := strconv.Atoi(nameOrIndex); err == nil {
@@ -160,7 +219,7 @@ func (s *State) resolveAccount(nameOrIndex string) (*Account, error) {
 	return nil, fmt.Errorf("no account named %q; run: csm accounts", nameOrIndex)
 }
 
-func (s *State) addAccount(name string, now time.Time) (*Account, error) {
+func (s *State) addAccount(providerID, name string, now time.Time) (*Account, error) {
 	if !accountNamePattern.MatchString(name) {
 		return nil, fmt.Errorf("invalid account name %q: use lowercase letters, digits, - or _ (max 32)", name)
 	}
@@ -169,13 +228,14 @@ func (s *State) addAccount(name string, now time.Time) (*Account, error) {
 	}
 	s.Accounts = append(s.Accounts, Account{
 		Name:      name,
+		Provider:  providerID,
 		Enabled:   true,
 		ConfigDir: filepath.Join(s.accountsDir(), name),
 		CreatedAt: now,
 	})
 	s.Config.AccountOrder = append(s.Config.AccountOrder, name)
-	if s.Config.ActiveAccount == "" {
-		s.Config.ActiveAccount = name
+	if s.active(providerID) == "" {
+		s.setActive(providerID, name)
 	}
 	return &s.Accounts[len(s.Accounts)-1], nil
 }
@@ -185,13 +245,15 @@ func (s *State) removeAccount(name string) error {
 	if i < 0 {
 		return fmt.Errorf("no account named %q", name)
 	}
+	providerID := s.Accounts[i].providerID()
 	s.Accounts = slices.Delete(s.Accounts, i, i+1)
 	s.Config.AccountOrder = slices.DeleteFunc(s.Config.AccountOrder, func(n string) bool { return n == name })
-	if s.Config.ActiveAccount == name {
-		s.Config.ActiveAccount = ""
-		if len(s.Config.AccountOrder) > 0 {
-			s.Config.ActiveAccount = s.Config.AccountOrder[0]
+	if s.active(providerID) == name {
+		next := ""
+		if remaining := s.accountNames(providerID); len(remaining) > 0 {
+			next = remaining[0]
 		}
+		s.setActive(providerID, next)
 	}
 	return nil
 }
@@ -218,8 +280,8 @@ func (a *Account) status(now time.Time) accountStatus {
 	}
 }
 
-func (s *State) nextAccount(current string, skip map[string]bool, now time.Time) (*Account, error) {
-	order := s.Config.AccountOrder
+func (s *State) nextAccount(providerID, current string, skip map[string]bool, now time.Time) (*Account, error) {
+	order := s.accountNames(providerID)
 	start := slices.Index(order, current)
 	for i := 1; i <= len(order); i++ {
 		name := order[(start+i+len(order))%len(order)]

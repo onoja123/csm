@@ -33,23 +33,14 @@ func FindClaude() (Claude, error) {
 	return Claude{Path: path}, nil
 }
 
-func (c Claude) Name() string { return "Claude Code" }
+func (c Claude) ID() string         { return ClaudeID }
+func (c Claude) Name() string       { return "Claude Code" }
+func (c Claude) Executable() string { return c.Path }
 
-func (c Claude) CheckEnv() error {
-	for _, name := range claudeAuthOverrideEnv {
-		if os.Getenv(name) != "" {
-			return fmt.Errorf("%s is set in your environment.\n\nIt overrides per-profile login, so every csm account would use the same credentials.\nUnset it before using csm:\n\n    unset %s", name, name)
-		}
-	}
-	return nil
-}
+func (c Claude) CheckEnv() error { return checkAuthEnv(claudeAuthOverrideEnv) }
 
 func (c Claude) Env(profileDir string, extra ...string) []string {
-	env := slices.DeleteFunc(os.Environ(), func(kv string) bool {
-		return strings.HasPrefix(kv, "CLAUDE_CONFIG_DIR=")
-	})
-	env = append(env, "CLAUDE_CONFIG_DIR="+profileDir)
-	return append(env, extra...)
+	return profileEnv("CLAUDE_CONFIG_DIR", profileDir, extra)
 }
 
 func (c Claude) Version() (string, error) {
@@ -68,7 +59,7 @@ func (c Claude) Features() (Features, error) {
 	help := string(out)
 	return Features{
 		Auth:         strings.Contains(help, "\n  auth "),
-		Hooks:        strings.Contains(help, "--settings"),
+		Supervise:    strings.Contains(help, "--settings"),
 		Resume:       strings.Contains(help, "--resume"),
 		SessionID:    strings.Contains(help, "--session-id"),
 		SystemPrompt: strings.Contains(help, "--append-system-prompt"),
@@ -134,8 +125,8 @@ type Settings struct {
 	StatusLine StatusLine             `json:"statusLine,omitzero"`
 }
 
-// SettingsArgs registers csm's hooks and status line for one launch without touching settings files.
-func (c Claude) SettingsArgs(csmPath string) []string {
+// LaunchArgs registers csm's hooks and status line for one launch without touching settings files.
+func (c Claude) LaunchArgs(csmPath string) []string {
 	quoted := "'" + strings.ReplaceAll(csmPath, "'", `'\''`) + "'"
 	s := Settings{
 		Hooks: map[string][]HookGroup{
@@ -200,6 +191,14 @@ func (c Claude) ParseUsage(data []byte) (Usage, error) {
 		SpendLimit: in.RateLimits.SpendLimit.usage(),
 	}, nil
 }
+
+func (c Claude) UsageCheckNote() string {
+	return "A live check sends one tiny Haiku message per account (about 500 tokens)."
+}
+
+func (c Claude) LimitPollInterval() time.Duration { return 0 }
+
+func (c Claude) CurrentSession(profileDir, cwd string, since time.Time) string { return "" }
 
 func (c Claude) ResumeArgs(sessionID string) []string {
 	return []string{"--resume", sessionID}
@@ -288,23 +287,23 @@ func classifyClaudeFailure(errorType, text string) StopReason {
 }
 
 // CarrySession copies a transcript, kept at <profile>/projects/<project>/<id>.jsonl plus an optional <id>/ dir.
-func (c Claude) CarrySession(fromProfile, toProfile, sessionID string) (bool, error) {
+func (c Claude) CarrySession(fromProfile, toProfile, sessionID string) (Carried, error) {
 	matches, err := filepath.Glob(filepath.Join(fromProfile, "projects", "*", sessionID+".jsonl"))
 	if err != nil || len(matches) == 0 {
-		return false, err
+		return Carried{}, err
 	}
 	src := matches[0]
 	dstProject := filepath.Join(toProfile, "projects", filepath.Base(filepath.Dir(src)))
 	if err := copyFile(src, filepath.Join(dstProject, sessionID+".jsonl")); err != nil {
-		return false, err
+		return Carried{}, err
 	}
 	srcExtra := filepath.Join(filepath.Dir(src), sessionID)
 	if _, err := os.Stat(srcExtra); err == nil {
 		if err := copyTree(srcExtra, filepath.Join(dstProject, sessionID)); err != nil {
-			return false, err
+			return Carried{}, err
 		}
 	}
-	return true, nil
+	return Carried{Args: c.ResumeArgs(sessionID), SessionID: sessionID}, nil
 }
 
 // LinkUserConfig symlinks ~/.claude settings into a profile; ~/.claude itself is never modified.
@@ -314,18 +313,8 @@ func (c Claude) LinkUserConfig(profileDir string) (string, []string, error) {
 		return "", nil, err
 	}
 	userDir := filepath.Join(home, ".claude")
-	var linked []string
-	for _, name := range []string{"settings.json", "CLAUDE.md", "agents", "commands", "skills"} {
-		src := filepath.Join(userDir, name)
-		if _, err := os.Stat(src); err != nil {
-			continue
-		}
-		if err := os.Symlink(src, filepath.Join(profileDir, name)); err != nil {
-			return userDir, linked, err
-		}
-		linked = append(linked, name)
-	}
-	return userDir, linked, nil
+	linked, err := linkUserConfig(userDir, profileDir, []string{"settings.json", "CLAUDE.md", "agents", "commands", "skills"})
+	return userDir, linked, err
 }
 
 func copyFile(src, dst string) error {

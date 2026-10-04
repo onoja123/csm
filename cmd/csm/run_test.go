@@ -11,9 +11,9 @@ import (
 	"github.com/onoja123/csm/internal/provider"
 )
 
-// The fake Claude re-invokes this test binary as csm.
+// The fake agents re-invoke this test binary as csm.
 func TestMain(m *testing.M) {
-	if len(os.Args) > 1 && (os.Args[1] == "hook" || os.Args[1] == "__fake-claude") {
+	if len(os.Args) > 1 && (os.Args[1] == "hook" || strings.HasPrefix(os.Args[1], "__fake-")) {
 		os.Exit(run(os.Args[1:]))
 	}
 	os.Exit(m.Run())
@@ -81,14 +81,14 @@ func TestNetworkErrorDoesNotSwitch(t *testing.T) {
 	}
 }
 
-func TestManualSwitchOfRunningSession(t *testing.T) {
-	requested := make(chan error, 1)
-	during := func(home, projectDir string) {
+// switchWhenLive asks the running alpha session to move to beta as soon as it is up.
+func switchWhenLive(providerID string, requested chan<- error) func(home, projectDir string) {
+	return func(home, projectDir string) {
 		deadline := time.Now().Add(10 * time.Second)
 		for time.Now().Before(deadline) {
 			s, err := loadState(home)
 			if err == nil {
-				if sess, live := s.loadLiveSession(projectDir); live && sess.Account == "alpha" {
+				if sess, live := s.loadLiveSession(providerID, projectDir); live && sess.Account == "alpha" {
 					requested <- requestSwitch(s, sess, "beta")
 					return
 				}
@@ -97,21 +97,120 @@ func TestManualSwitchOfRunningSession(t *testing.T) {
 		}
 		requested <- errors.New("session never became live")
 	}
-	res, err := runFailoverScenario(testBinary(t), scenario{hold: "alpha", during: during})
+}
+
+func TestManualSwitchOfRunningSession(t *testing.T) {
+	for _, providerID := range provider.IDs {
+		t.Run(providerID, func(t *testing.T) {
+			requested := make(chan error, 1)
+			res, err := runFailoverScenario(testBinary(t), scenario{provider: providerID, hold: "alpha", during: switchWhenLive(providerID, requested)})
+			if err != nil {
+				t.Fatalf("%v\n%s", err, res.output)
+			}
+			if err := <-requested; err != nil {
+				t.Fatal(err)
+			}
+			if res.active != "beta" || !res.resumed {
+				t.Fatalf("active=%s resumed=%v\n%s", res.active, res.resumed, res.output)
+			}
+			if res.checkpoint.Reason != provider.StopReasonManualSwitch {
+				t.Fatalf("checkpoint reason = %s", res.checkpoint.Reason)
+			}
+			if !strings.Contains(res.output, "Switching alpha → beta") {
+				t.Fatalf("output:\n%s", res.output)
+			}
+		})
+	}
+}
+
+func TestCodexFailoverSwitchesAndResumes(t *testing.T) {
+	res, err := runFailoverScenario(testBinary(t), scenario{provider: provider.CodexID, limited: "alpha"})
 	if err != nil {
 		t.Fatalf("%v\n%s", err, res.output)
-	}
-	if err := <-requested; err != nil {
-		t.Fatal(err)
 	}
 	if res.active != "beta" || !res.resumed {
 		t.Fatalf("active=%s resumed=%v\n%s", res.active, res.resumed, res.output)
 	}
-	if res.checkpoint.Reason != provider.StopReasonManualSwitch {
-		t.Fatalf("checkpoint reason = %s", res.checkpoint.Reason)
+	if res.checkpoint.Account != "alpha" || res.checkpoint.Reason != provider.StopReasonUsageLimit || res.checkpoint.SessionID == "" {
+		t.Fatalf("checkpoint = %+v", res.checkpoint)
 	}
-	if !strings.Contains(res.output, "Switching alpha → beta") {
-		t.Fatalf("output:\n%s", res.output)
+	if res.gitBefore != res.gitAfter {
+		t.Fatalf("git changed: %q → %q", res.gitBefore, res.gitAfter)
+	}
+	if alpha := res.usage["alpha"]; !alpha.Usage.Limited || alpha.Usage.FiveHour.UsedPercent != 100 || alpha.Usage.SevenDay.UsedPercent != 17 {
+		t.Fatalf("polled usage not recorded: %+v", res.usage)
+	}
+	for _, want := range []string{"alpha account became unavailable", "known usage limit", "Restoring session", "Starting Codex as beta"} {
+		if !strings.Contains(res.output, want) {
+			t.Errorf("output missing %q:\n%s", want, res.output)
+		}
+	}
+}
+
+func TestCodexFailoverPausesWhenAllAccountsLimited(t *testing.T) {
+	res, err := runFailoverScenario(testBinary(t), scenario{provider: provider.CodexID, limited: "alpha,beta"})
+	if err != nil {
+		t.Fatalf("%v\n%s", err, res.output)
+	}
+	if strings.Count(res.output, "became unavailable") != 1 {
+		t.Fatalf("expected exactly one switch:\n%s", res.output)
+	}
+	if !strings.Contains(res.output, "All configured accounts are currently unavailable") {
+		t.Fatalf("missing pause message:\n%s", res.output)
+	}
+}
+
+func TestCodexProfileAndUsage(t *testing.T) {
+	shim := filepath.Join(t.TempDir(), "codex")
+	os.WriteFile(shim, []byte("#!/bin/sh\nexec '"+testBinary(t)+"' __fake-codex \"$@\"\n"), 0o700)
+	p := provider.Codex{Path: shim}
+	t.Setenv("CSM_FAKE_LIMIT", "limited")
+
+	features, err := p.Features()
+	if err != nil || !features.CanIsolate() || !features.CanContinue() || !features.UsageProbe || features.SessionID {
+		t.Fatalf("features = %+v, %v", features, err)
+	}
+	s := newTestState(t)
+	s.addAccount(provider.CodexID, "work", testNow)
+	s.addAccount(provider.CodexID, "limited", testNow)
+	work, _ := s.resolveAccount("work")
+	limited, _ := s.resolveAccount("limited")
+	for _, a := range []*Account{work, limited} {
+		os.MkdirAll(a.ConfigDir, 0o700)
+		if err := checkFreshProfileIsolated(p, a.ConfigDir); err != nil {
+			t.Fatalf("fresh profile: %v", err)
+		}
+		if _, err := verifyProfile(p, a); err == nil || !strings.Contains(err.Error(), "not logged in") {
+			t.Fatalf("got %v, want not logged in", err)
+		}
+		if err := p.Login(a.ConfigDir); err != nil {
+			t.Fatal(err)
+		}
+		st, err := verifyProfile(p, a)
+		if err != nil || st.Email != a.Name+"@example.test" {
+			t.Fatalf("got %+v, %v", st, err)
+		}
+		a.Email, a.VerifiedAt = st.Email, testNow
+	}
+	if err := checkFreshProfileIsolated(p, work.ConfigDir); err == nil {
+		t.Fatal("a logged-in directory passed the fresh-profile check")
+	}
+
+	if errs := refreshUsage(s, p, []string{"work", "limited"}, time.Now()); len(errs) != 0 {
+		t.Fatalf("errs = %v", errs)
+	}
+	rec, ok := s.loadUsage("work")
+	if !ok || rec.Usage.FiveHour.UsedPercent != 42 || rec.Usage.SevenDay.UsedPercent != 17 || rec.Usage.Limited {
+		t.Fatalf("work = %+v", rec)
+	}
+	if rec, _ := s.loadUsage("limited"); !rec.Usage.Limited {
+		t.Fatalf("limited = %+v", rec)
+	}
+	if id := p.CurrentSession(work.ConfigDir, t.TempDir(), time.Now()); id != "" {
+		t.Fatalf("found session %q in a profile with none", id)
+	}
+	if carried, err := p.CarrySession(work.ConfigDir, limited.ConfigDir, "missing"); len(carried.Args) > 0 || err == nil {
+		t.Fatalf("carried a session that does not exist: %v %v", carried, err)
 	}
 }
 
@@ -123,7 +222,7 @@ func TestRecoversInterruptedSwitch(t *testing.T) {
 		os.MkdirAll(filepath.Dir(transcript), 0o700)
 		os.WriteFile(transcript, []byte(`{"profile":"alpha"}`+"\n"), 0o600)
 		s.saveCheckpoint(Checkpoint{Version: stateVersion, ProjectDir: projectDir, Account: "alpha", SessionID: sid, CheckpointedAt: time.Now(), Reason: provider.StopReasonUsageLimit})
-		writeJSON(filepath.Join(s.projectStateDir(projectDir), transitionFile), Transition{
+		writeJSON(filepath.Join(s.projectStateDir(provider.ClaudeID, projectDir), transitionFile), Transition{
 			Version: stateVersion, ProjectDir: projectDir, From: "alpha", To: "beta", SessionID: sid, Reason: provider.StopReasonUsageLimit, CSMPID: 1 << 30,
 		})
 	}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -69,28 +70,47 @@ func cmdUsage(home string, args []string) error {
 
 	var errs map[string]error
 	if !cached {
-		p, err := provider.FindClaude()
-		if err != nil {
-			return err
+		errs = map[string]error{}
+		for _, id := range provider.IDs {
+			group := s.namesOf(id, names)
+			if len(group) == 0 {
+				continue
+			}
+			p, err := usageProvider(id)
+			if err != nil {
+				for _, name := range group {
+					errs[name] = err
+				}
+				continue
+			}
+			fmt.Printf("Checking %d account(s) with %s...\n", len(group), p.Name())
+			maps.Copy(errs, refreshUsage(s, p, group, time.Now()))
 		}
-		if err := p.CheckEnv(); err != nil {
-			return err
-		}
-		features, err := p.Features()
-		if err != nil {
-			return err
-		}
-		if !features.UsageProbe {
-			return fmt.Errorf("this %s version cannot report usage outside a session.\n\nShow the last recorded figures with: csm usage --cached", p.Name())
-		}
-		fmt.Printf("Checking %d account(s) with %s...\n\n", len(names), p.Name())
-		errs = refreshUsage(s, p, names, time.Now())
+		fmt.Println()
 	}
 	printUsage(os.Stdout, s, names, errs, time.Now())
 	return nil
 }
 
-func refreshUsage(s *State, p provider.Claude, names []string, now time.Time) map[string]error {
+func usageProvider(id string) (provider.Provider, error) {
+	p, err := provider.Find(id)
+	if err != nil {
+		return nil, err
+	}
+	if err := p.CheckEnv(); err != nil {
+		return nil, err
+	}
+	features, err := p.Features()
+	if err != nil {
+		return nil, err
+	}
+	if !features.UsageProbe {
+		return nil, fmt.Errorf("this %s version cannot report usage outside a session.\n\nFigures recorded during a session, if any, are shown by: csm usage --cached", p.Name())
+	}
+	return p, nil
+}
+
+func refreshUsage(s *State, p provider.Provider, names []string, now time.Time) map[string]error {
 	errs := make([]error, len(names))
 	var wg sync.WaitGroup
 	for i, name := range names {
@@ -136,10 +156,37 @@ func refreshUsage(s *State, p provider.Claude, names []string, now time.Time) ma
 }
 
 func printUsage(w io.Writer, s *State, names []string, errs map[string]error, now time.Time) {
-	fmt.Fprintln(w, "Usage (Claude Code)")
+	var notes []string
+	printed := false
+	for _, id := range provider.IDs {
+		group := s.namesOf(id, names)
+		if len(group) == 0 {
+			continue
+		}
+		if printed {
+			fmt.Fprintln(w)
+		}
+		printed = true
+		fmt.Fprintf(w, "Usage (%s)\n", providerName(id))
+		printProviderUsage(w, s, id, group, errs, now)
+		if p, err := provider.New(id, ""); err == nil && p.UsageCheckNote() != "" {
+			notes = append(notes, p.UsageCheckNote())
+		}
+	}
+	if errs == nil {
+		fmt.Fprintln(w, "\nLast saved figures only. Run `csm usage` without --cached for a live check.")
+		return
+	}
+	fmt.Fprintln(w)
+	for _, note := range notes {
+		fmt.Fprintln(w, note)
+	}
+}
+
+func printProviderUsage(w io.Writer, s *State, providerID string, names []string, errs map[string]error, now time.Time) {
 	for _, name := range names {
 		marker := "○"
-		if name == s.Config.ActiveAccount {
+		if name == s.active(providerID) {
 			marker = "●"
 		}
 		fmt.Fprintln(w)
@@ -168,11 +215,6 @@ func printUsage(w io.Writer, s *State, names []string, errs map[string]error, no
 		if a, err := s.resolveAccount(name); err == nil && a.status(now) == statusCooldown {
 			fmt.Fprintf(w, "    csm cooldown until %s\n", formatReset(a.CooldownUntil, now))
 		}
-	}
-	if errs == nil {
-		fmt.Fprintln(w, "\nLast saved figures only. Run `csm usage` without --cached for a live check.")
-	} else {
-		fmt.Fprintln(w, "\nA live check sends one tiny Haiku message per account (about 500 tokens).")
 	}
 }
 

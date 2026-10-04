@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -19,8 +20,9 @@ import (
 )
 
 const (
-	stopGracePeriod = 10 * time.Second
-	usageCooldown   = time.Hour
+	stopGracePeriod  = 10 * time.Second
+	usageCooldown    = time.Hour
+	exitCheckTimeout = 10 * time.Second
 )
 
 // Written by the session-start hook; the ID changes on /clear or /resume.
@@ -32,21 +34,29 @@ type providerSession struct {
 
 type runner struct {
 	state    *State
-	provider provider.Claude
+	provider provider.Provider
 	csmPath  string
 	features provider.Features
-	cwd      string
-	project  Project
-	stateDir string
-	out      io.Writer
-	in       *bufio.Reader
+	// pollInterval is how often usage is checked for a reached limit; zero means the agent reports limits itself.
+	pollInterval time.Duration
+	cwd          string
+	project      Project
+	stateDir     string
+	out          io.Writer
+	in           *bufio.Reader
 	// interactive is false under `csm test failover` and when stdin is not a TTY.
 	interactive bool
 	// Accounts limited during this run, so failover pauses instead of cycling.
 	unavailable map[string]bool
 }
 
+type usageCheck struct {
+	usage provider.Usage
+	err   error
+}
+
 type outcome struct {
+	startedAt    time.Time
 	exitCode     int
 	reason       provider.StopReason
 	failure      provider.Failure
@@ -65,7 +75,7 @@ func (r *runner) step(label string, ok bool) {
 }
 
 func (r *runner) run(userArgs []string) (int, error) {
-	if sess, live := r.state.loadLiveSession(r.project.Dir); live {
+	if sess, live := r.state.loadLiveSession(r.provider.ID(), r.project.Dir); live {
 		return 1, fmt.Errorf("csm is already managing %s for this project (csm pid %d, account %s).\n\nSwitch it with `csm use <name>` or `csm next`, or stop that session first.", r.provider.Name(), sess.CSMPID, sess.Account)
 	}
 
@@ -89,9 +99,9 @@ func (r *runner) run(userArgs []string) (int, error) {
 	}
 
 	for {
-		acct, err := r.state.resolveAccount(r.state.Config.ActiveAccount)
+		acct, err := r.state.resolveAccount(r.state.active(r.provider.ID()))
 		if err != nil {
-			return 1, fmt.Errorf("no active account; add one with: csm account add <name>")
+			return 1, fmt.Errorf("no active %s account; add one with: csm account add <name> --provider %s", r.provider.Name(), r.provider.ID())
 		}
 		if _, err := verifyProfile(r.provider, acct); err != nil {
 			return 1, fmt.Errorf("cannot start %s as %s.\n\n%w", r.provider.Name(), acct.Name, err)
@@ -104,7 +114,7 @@ func (r *runner) run(userArgs []string) (int, error) {
 		if res.switchTo == "" {
 			r.report(acct, res)
 			if res.reason == provider.StopReasonUsageLimit && !res.noneLeft && r.interactive {
-				next, err := r.state.nextAccount(acct.Name, r.unavailable, time.Now())
+				next, err := r.state.nextAccount(r.provider.ID(), acct.Name, r.unavailable, time.Now())
 				if err == nil && r.confirm(fmt.Sprintf("Switch to %s and resume this session? [Y/n] ", next.Name)) {
 					args, sessionID, err = r.switchAccount(acct, next.Name, res)
 					if err != nil {
@@ -127,10 +137,10 @@ func (r *runner) launch(acct *Account, args []string, sessionID string, sigs cha
 	os.Remove(filepath.Join(r.stateDir, requestFile))
 	os.Remove(filepath.Join(r.stateDir, providerSessionFile))
 
-	if r.features.Hooks {
-		args = append(r.provider.SettingsArgs(r.csmPath), args...)
+	if r.features.Supervise {
+		args = append(r.provider.LaunchArgs(r.csmPath), args...)
 	}
-	cmd := exec.Command(r.provider.Path, args...)
+	cmd := exec.Command(r.provider.Executable(), args...)
 	cmd.Dir = r.cwd
 	cmd.Env = r.provider.Env(acct.ConfigDir,
 		"CSM_STATE_DIR="+r.stateDir,
@@ -150,7 +160,7 @@ func (r *runner) launch(acct *Account, args []string, sessionID string, sigs cha
 	if err := r.state.save(); err != nil {
 		return outcome{}, err
 	}
-	sess := Session{Version: stateVersion, ProjectDir: r.project.Dir, Account: acct.Name, SessionID: sessionID, CSMPID: os.Getpid(), ProcessPID: cmd.Process.Pid, StartedAt: startedAt}
+	sess := Session{Version: stateVersion, Provider: r.provider.ID(), ProjectDir: r.project.Dir, Account: acct.Name, SessionID: sessionID, CSMPID: os.Getpid(), ProcessPID: cmd.Process.Pid, StartedAt: startedAt}
 	if err := writeJSON(filepath.Join(r.stateDir, sessionFile), sess); err != nil {
 		return outcome{}, err
 	}
@@ -160,7 +170,18 @@ func (r *runner) launch(acct *Account, args []string, sessionID string, sigs cha
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
 
-	res := outcome{reason: provider.StopReasonProcessExited, sessionID: sessionID}
+	res := outcome{startedAt: startedAt, reason: provider.StopReasonProcessExited, sessionID: sessionID}
+
+	var pollTick <-chan time.Time
+	if r.pollInterval > 0 {
+		ticker := time.NewTicker(r.pollInterval)
+		defer ticker.Stop()
+		pollTick = ticker.C
+	}
+	polled := make(chan usageCheck, 1)
+	polling := false
+	profileDir, accountName := acct.ConfigDir, acct.Name
+
 	var killTimer *time.Timer
 	stop := func() {
 		if killTimer != nil {
@@ -177,6 +198,17 @@ wait:
 		select {
 		case waitErr = <-done:
 			break wait
+		case <-pollTick:
+			if polling {
+				continue
+			}
+			polling = true
+			go func() { polled <- r.fetchUsage(profileDir, usageFetchTimeout) }()
+		case check := <-polled:
+			polling = false
+			if r.recordUsage(accountName, check) && res.reason != provider.StopReasonUsageLimit && res.switchTo == "" {
+				r.handleFailure(acct, &res, r.limitFailure(), userStopped, stop)
+			}
 		case sig := <-sigs:
 			switch sig {
 			case syscall.SIGINT:
@@ -186,9 +218,14 @@ wait:
 				userStopped = true
 				cmd.Process.Signal(sig)
 			case syscall.SIGUSR1:
-				r.handleFailure(acct, &res, startedAt, userStopped, stop)
+				var f provider.Failure
+				if err := readJSON(filepath.Join(r.stateDir, eventFile), &f); err != nil {
+					slog.Debug("failure event unreadable", "err", err)
+					continue
+				}
+				r.handleFailure(acct, &res, f, userStopped, stop)
 			case syscall.SIGUSR2:
-				r.handleSwitchRequest(acct, &res, startedAt, stop)
+				r.handleSwitchRequest(acct, &res, stop)
 			}
 		}
 	}
@@ -208,24 +245,54 @@ wait:
 			res.reason = provider.StopReasonUnknown
 		}
 	}
+	// A limit reached since the last poll would otherwise be missed, and with it the offer to switch and resume.
+	if r.pollInterval > 0 && r.interactive && !userStopped && res.switchTo == "" && res.reason != provider.StopReasonUsageLimit {
+		if r.recordUsage(accountName, r.fetchUsage(profileDir, exitCheckTimeout)) {
+			r.handleFailure(acct, &res, r.limitFailure(), true, func() {})
+		}
+	}
 	slog.Debug("agent exited", "account", acct.Name, "exit_code", res.exitCode, "reason", res.reason, "switch_to", res.switchTo)
 	return res, nil
 }
 
-func (r *runner) currentSessionID(fallback string) string {
+func (r *runner) fetchUsage(profileDir string, timeout time.Duration) usageCheck {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	usage, err := r.provider.FetchUsage(ctx, profileDir)
+	return usageCheck{usage: usage, err: err}
+}
+
+// recordUsage saves a usage check and reports whether the account has reached its limit.
+func (r *runner) recordUsage(account string, check usageCheck) bool {
+	if check.err != nil {
+		slog.Debug("usage check failed", "account", account, "err", check.err)
+		return false
+	}
+	r.state.saveUsage(UsageRecord{Version: stateVersion, Account: account, UpdatedAt: time.Now(), Usage: check.usage})
+	return check.usage.Limited
+}
+
+func (r *runner) limitFailure() provider.Failure {
+	return provider.Failure{
+		Error:   "usage_limit",
+		Message: r.provider.Name() + " reports that this account has reached its usage limit.",
+		Reason:  provider.StopReasonUsageLimit,
+	}
+}
+
+func (r *runner) currentSessionID(acct *Account, since time.Time, fallback string) string {
 	var cs providerSession
 	if readJSON(filepath.Join(r.stateDir, providerSessionFile), &cs) == nil && cs.SessionID != "" {
 		return cs.SessionID
 	}
+	if id := r.provider.CurrentSession(acct.ConfigDir, r.cwd, since); id != "" {
+		return id
+	}
 	return fallback
 }
 
-func (r *runner) handleFailure(acct *Account, res *outcome, startedAt time.Time, userStopped bool, stop func()) {
-	var f provider.Failure
-	if err := readJSON(filepath.Join(r.stateDir, eventFile), &f); err != nil {
-		slog.Debug("failure event unreadable", "err", err)
-		return
-	}
+// userStopped also covers an agent that has already exited: the limit is recorded but nothing switches by itself.
+func (r *runner) handleFailure(acct *Account, res *outcome, f provider.Failure, userStopped bool, stop func()) {
 	res.failure = f
 	res.reason = f.Reason
 	if f.SessionID != "" {
@@ -257,17 +324,17 @@ func (r *runner) handleFailure(acct *Account, res *outcome, startedAt time.Time,
 	if userStopped {
 		return
 	}
-	next, err := r.state.nextAccount(acct.Name, r.unavailable, time.Now())
+	next, err := r.state.nextAccount(r.provider.ID(), acct.Name, r.unavailable, time.Now())
 	if err != nil {
 		res.noneLeft = true
 		return
 	}
 	res.switchTo = next.Name
-	r.beginSwitch(acct, next.Name, res, startedAt)
+	r.beginSwitch(acct, next.Name, res)
 	stop()
 }
 
-func (r *runner) handleSwitchRequest(acct *Account, res *outcome, startedAt time.Time, stop func()) {
+func (r *runner) handleSwitchRequest(acct *Account, res *outcome, stop func()) {
 	var req SwitchRequest
 	path := filepath.Join(r.stateDir, requestFile)
 	if err := readJSON(path, &req); err != nil {
@@ -287,20 +354,21 @@ func (r *runner) handleSwitchRequest(acct *Account, res *outcome, startedAt time
 	}
 	res.reason = provider.StopReasonManualSwitch
 	res.switchTo = req.To
-	r.beginSwitch(acct, req.To, res, startedAt)
+	r.beginSwitch(acct, req.To, res)
 	stop()
 }
 
-// Runs while the old agent is still alive, before it is stopped.
-func (r *runner) beginSwitch(from *Account, to string, res *outcome, startedAt time.Time) {
-	res.sessionID = r.currentSessionID(res.sessionID)
+// Usually runs while the old agent is still alive, before it is stopped.
+func (r *runner) beginSwitch(from *Account, to string, res *outcome) {
+	res.sessionID = r.currentSessionID(from, res.startedAt, res.sessionID)
 	now := time.Now()
 	cp := Checkpoint{
 		Version:        stateVersion,
+		Provider:       r.provider.ID(),
 		ProjectDir:     r.project.Dir,
 		Account:        from.Name,
 		SessionID:      res.sessionID,
-		StartedAt:      startedAt,
+		StartedAt:      res.startedAt,
 		CheckpointedAt: now,
 		Branch:         detectProject(r.cwd).Branch,
 		Reason:         res.reason,
@@ -309,7 +377,7 @@ func (r *runner) beginSwitch(from *Account, to string, res *outcome, startedAt t
 	if err := r.state.saveCheckpoint(cp); err != nil {
 		slog.Debug("save checkpoint", "err", err)
 	}
-	t := Transition{Version: stateVersion, ProjectDir: r.project.Dir, From: from.Name, To: to, SessionID: res.sessionID, Reason: res.reason, CSMPID: os.Getpid(), StartedAt: now}
+	t := Transition{Version: stateVersion, Provider: r.provider.ID(), ProjectDir: r.project.Dir, From: from.Name, To: to, SessionID: res.sessionID, Reason: res.reason, CSMPID: os.Getpid(), StartedAt: now}
 	if err := writeJSON(filepath.Join(r.stateDir, transitionFile), t); err != nil {
 		slog.Debug("save transition", "err", err)
 	}
@@ -318,8 +386,7 @@ func (r *runner) beginSwitch(from *Account, to string, res *outcome, startedAt t
 func (r *runner) switchAccount(from *Account, to string, res outcome) ([]string, string, error) {
 	if res.switchTo == "" {
 		// Switch confirmed after exit, so nothing was checkpointed yet.
-		res.sessionID = r.currentSessionID(res.sessionID)
-		r.beginSwitch(from, to, &res, time.Now())
+		r.beginSwitch(from, to, &res)
 	}
 
 	fmt.Fprintln(r.out)
@@ -337,7 +404,7 @@ func (r *runner) switchAccount(from *Account, to string, res outcome) ([]string,
 	if err != nil {
 		return nil, "", err
 	}
-	r.state.Config.ActiveAccount = to
+	r.state.setActive(r.provider.ID(), to)
 	if err := r.state.save(); err != nil {
 		return nil, "", err
 	}
@@ -354,11 +421,13 @@ func (r *runner) handoffArgs(from, to *Account, sessionID string) (args []string
 		if err != nil {
 			slog.Debug("carry session", "err", err)
 		}
-		if carried {
-			return r.provider.ResumeArgs(sessionID), sessionID, true
+		if len(carried.Args) > 0 {
+			return carried.Args, carried.SessionID, true
 		}
 	}
-	sessionIDOut = provider.NewSessionID()
+	if r.features.SessionID {
+		sessionIDOut = provider.NewSessionID()
+	}
 	return r.provider.NewSessionArgs(r.features, sessionIDOut, r.handoffNote(from.Name)), sessionIDOut, false
 }
 
@@ -372,8 +441,10 @@ func (r *runner) printRestore(to string, resumed bool) {
 	fmt.Fprintln(r.out)
 	if resumed {
 		fmt.Fprintln(r.out, "The request that hit the limit was not retried; send it again or type \"continue\".")
-	} else {
+	} else if r.features.SystemPrompt {
 		fmt.Fprintf(r.out, "The conversation could not be carried over. Starting a new %s session\nin the same project with a handoff note.\n", r.provider.Name())
+	} else {
+		fmt.Fprintf(r.out, "The conversation could not be carried over. Starting a new %s session\nin the same project.\n", r.provider.Name())
 	}
 	fmt.Fprintln(r.out)
 }
@@ -394,7 +465,7 @@ type recovery struct {
 }
 
 func (r *runner) recoverTransition() (*recovery, error) {
-	t, ok, err := r.state.loadTransition(r.project.Dir)
+	t, ok, err := r.state.loadTransition(r.provider.ID(), r.project.Dir)
 	if err != nil || !ok || processAlive(t.CSMPID) {
 		return nil, err
 	}
@@ -421,7 +492,7 @@ func (r *runner) recoverTransition() (*recovery, error) {
 		return nil, err
 	}
 	r.step("Target account "+to.Name+" verified", true)
-	r.state.Config.ActiveAccount = to.Name
+	r.state.setActive(r.provider.ID(), to.Name)
 	if err := r.state.save(); err != nil {
 		return nil, err
 	}

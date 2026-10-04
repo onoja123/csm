@@ -49,13 +49,19 @@ func projectID(dir string) string {
 	return filepath.Base(dir) + "-" + hex.EncodeToString(sum[:])[:12]
 }
 
-func (s *State) projectStateDir(dir string) string {
-	return filepath.Join(s.projectsDir(), projectID(dir))
+// Each provider keeps its own state for a project, so two agents can run in one project side by side.
+func (s *State) projectStateDir(providerID, dir string) string {
+	id := projectID(dir)
+	if providerID = providerOrDefault(providerID); providerID != provider.ClaudeID {
+		id += "-" + providerID
+	}
+	return filepath.Join(s.projectsDir(), id)
 }
 
 // Session is the live record of a csm-managed agent process for one project.
 type Session struct {
 	Version    int       `json:"version"`
+	Provider   string    `json:"provider,omitempty"`
 	ProjectDir string    `json:"project_dir"`
 	Account    string    `json:"account"`
 	SessionID  string    `json:"session_id"`
@@ -67,6 +73,7 @@ type Session struct {
 // Checkpoint is handoff metadata only; the conversation lives in the agent's own transcript.
 type Checkpoint struct {
 	Version        int                 `json:"version"`
+	Provider       string              `json:"provider,omitempty"`
 	ProjectDir     string              `json:"project_dir"`
 	Account        string              `json:"account"`
 	SessionID      string              `json:"session_id"`
@@ -80,6 +87,7 @@ type Checkpoint struct {
 // A leftover transition file means a switch was interrupted.
 type Transition struct {
 	Version    int                 `json:"version"`
+	Provider   string              `json:"provider,omitempty"`
 	ProjectDir string              `json:"project_dir"`
 	From       string              `json:"from"`
 	To         string              `json:"to"`
@@ -89,7 +97,7 @@ type Transition struct {
 	StartedAt  time.Time           `json:"started_at"`
 }
 
-// SwitchRequest asks a running `csm claude` to move to another account.
+// SwitchRequest asks a running csm session to move to another account.
 type SwitchRequest struct {
 	To          string    `json:"to"`
 	RequestedAt time.Time `json:"requested_at"`
@@ -105,7 +113,7 @@ const (
 )
 
 func (s *State) saveCheckpoint(c Checkpoint) error {
-	dir := s.projectStateDir(c.ProjectDir)
+	dir := s.projectStateDir(c.Provider, c.ProjectDir)
 	if err := os.MkdirAll(filepath.Join(dir, historyDir), 0o700); err != nil {
 		return err
 	}
@@ -116,24 +124,24 @@ func (s *State) saveCheckpoint(c Checkpoint) error {
 	return writeJSON(filepath.Join(dir, checkpointFile), c)
 }
 
-func (s *State) loadCheckpoint(projectDir string) (Checkpoint, error) {
+func (s *State) loadCheckpoint(providerID, projectDir string) (Checkpoint, error) {
 	var c Checkpoint
-	err := readJSON(filepath.Join(s.projectStateDir(projectDir), checkpointFile), &c)
+	err := readJSON(filepath.Join(s.projectStateDir(providerID, projectDir), checkpointFile), &c)
 	return c, err
 }
 
-func (s *State) loadTransition(projectDir string) (Transition, bool, error) {
+func (s *State) loadTransition(providerID, projectDir string) (Transition, bool, error) {
 	var t Transition
-	err := readJSON(filepath.Join(s.projectStateDir(projectDir), transitionFile), &t)
+	err := readJSON(filepath.Join(s.projectStateDir(providerID, projectDir), transitionFile), &t)
 	if errors.Is(err, os.ErrNotExist) {
 		return t, false, nil
 	}
 	return t, err == nil, err
 }
 
-func (s *State) loadLiveSession(projectDir string) (Session, bool) {
+func (s *State) loadLiveSession(providerID, projectDir string) (Session, bool) {
 	var sess Session
-	if err := readJSON(filepath.Join(s.projectStateDir(projectDir), sessionFile), &sess); err != nil {
+	if err := readJSON(filepath.Join(s.projectStateDir(providerID, projectDir), sessionFile), &sess); err != nil {
 		return sess, false
 	}
 	return sess, processAlive(sess.CSMPID)

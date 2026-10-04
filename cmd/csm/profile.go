@@ -21,7 +21,7 @@ func samePath(a, b string) bool {
 var errNotLoggedIn = errors.New("not logged in")
 
 // verifyProfile fails unless the provider reports this profile's directory, a login, and the recorded identity.
-func verifyProfile(p provider.Claude, a *Account) (provider.Identity, error) {
+func verifyProfile(p provider.Provider, a *Account) (provider.Identity, error) {
 	id, err := p.Identity(a.ConfigDir)
 	if err != nil {
 		return id, err
@@ -39,7 +39,7 @@ func verifyProfile(p provider.Claude, a *Account) (provider.Identity, error) {
 }
 
 // A login visible in an empty profile means credentials leak in from shared storage.
-func checkFreshProfileIsolated(p provider.Claude, profileDir string) error {
+func checkFreshProfileIsolated(p provider.Provider, profileDir string) error {
 	id, err := p.Identity(profileDir)
 	if err != nil {
 		return err
@@ -53,7 +53,7 @@ func checkFreshProfileIsolated(p provider.Claude, profileDir string) error {
 	return nil
 }
 
-func probeIsolation(s *State, p provider.Claude) error {
+func probeIsolation(s *State, p provider.Provider) error {
 	dir, err := os.MkdirTemp(s.accountsDir(), ".probe-")
 	if err != nil {
 		return err
@@ -62,6 +62,6 @@ func probeIsolation(s *State, p provider.Claude) error {
 	return checkFreshProfileIsolated(p, dir)
 }
 
-func errUnsupported(p provider.Claude) error {
-	return fmt.Errorf("this %s version lacks the profile login and hook support csm needs.\n\nUpgrade %s and run: csm doctor", p.Name(), p.Name())
+func errUnsupported(p provider.Provider) error {
+	return fmt.Errorf("this %s version lacks the profile login and session supervision csm needs.\n\nUpgrade %s and run: csm doctor", p.Name(), p.Name())
 }
