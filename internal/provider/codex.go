@@ -67,33 +67,48 @@ func (c Codex) Features() (Features, error) {
 	}, nil
 }
 
-type codexCall struct {
-	Method string
-	Params any
-}
-
-type codexReply struct {
-	Result json.RawMessage
-	Err    error
-}
-
 type codexRequest struct {
-	ID     *int   `json:"id,omitempty"`
+	ID     int    `json:"id"`
 	Method string `json:"method"`
 	Params any    `json:"params,omitempty"`
+}
+
+type codexNotification struct {
+	Method string `json:"method"`
 }
 
 type codexResponse struct {
 	ID     *int            `json:"id"`
 	Method string          `json:"method"`
 	Result json.RawMessage `json:"result"`
-	Error  *struct {
-		Message string `json:"message"`
-	} `json:"error"`
+	Error  *codexError     `json:"error"`
 }
 
-// rpc asks one short-lived `codex app-server` over stdio; it returns the Codex home the server reports and one reply per call.
-func (c Codex) rpc(ctx context.Context, profileDir string, calls ...codexCall) (string, []codexReply, error) {
+type codexError struct {
+	Message string `json:"message"`
+}
+
+type codexInitializeParams struct {
+	ClientInfo codexClientInfo `json:"clientInfo"`
+}
+
+type codexClientInfo struct {
+	Name    string `json:"name"`
+	Title   string `json:"title"`
+	Version string `json:"version"`
+}
+
+type codexInitialized struct {
+	CodexHome string `json:"codexHome"`
+}
+
+const (
+	codexInitializeID = 1
+	codexCallID       = 2
+)
+
+// rpc asks one short-lived `codex app-server` over stdio for one thing; it decodes the answer into result and returns the Codex home the server reports.
+func (c Codex) rpc(ctx context.Context, profileDir, method string, params, result any) (string, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, c.Path, "app-server")
@@ -101,14 +116,14 @@ func (c Codex) rpc(ctx context.Context, profileDir string, calls ...codexCall) (
 	cmd.Dir = os.TempDir()
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		return "", nil, err
+		return "", err
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return "", nil, err
+		return "", err
 	}
 	if err := cmd.Start(); err != nil {
-		return "", nil, fmt.Errorf("start codex app-server: %w", err)
+		return "", fmt.Errorf("start codex app-server: %w", err)
 	}
 	defer func() {
 		stdin.Close()
@@ -119,11 +134,11 @@ func (c Codex) rpc(ctx context.Context, profileDir string, calls ...codexCall) (
 	enc := json.NewEncoder(stdin)
 	sc := bufio.NewScanner(stdout)
 	sc.Buffer(make([]byte, 64*1024), 16*1024*1024)
-	// Notifications and server requests are skipped; only replies to csm's own numbered requests count.
-	next := func() (codexResponse, error) {
+	// Notifications and the server's own requests are skipped; only the reply to the given request counts.
+	reply := func(id int) (codexResponse, error) {
 		for sc.Scan() {
 			var msg codexResponse
-			if json.Unmarshal(sc.Bytes(), &msg) == nil && msg.ID != nil && msg.Method == "" {
+			if json.Unmarshal(sc.Bytes(), &msg) == nil && msg.ID != nil && *msg.ID == id && msg.Method == "" {
 				return msg, nil
 			}
 		}
@@ -133,84 +148,64 @@ func (c Codex) rpc(ctx context.Context, profileDir string, calls ...codexCall) (
 		return codexResponse{}, errors.New("codex app-server exited before answering")
 	}
 
-	initID := 0
-	clientInfo := map[string]string{"name": "csm", "title": "Code Session Manager", "version": "1"}
-	if err := enc.Encode(codexRequest{ID: &initID, Method: "initialize", Params: map[string]any{"clientInfo": clientInfo}}); err != nil {
-		return "", nil, err
+	clientInfo := codexClientInfo{Name: "csm", Title: "Code Session Manager", Version: "1"}
+	if err := enc.Encode(codexRequest{ID: codexInitializeID, Method: "initialize", Params: codexInitializeParams{ClientInfo: clientInfo}}); err != nil {
+		return "", err
 	}
-	msg, err := next()
+	msg, err := reply(codexInitializeID)
 	if err != nil {
-		return "", nil, err
+		return "", err
 	}
 	if msg.Error != nil {
-		return "", nil, fmt.Errorf("codex app-server: %s", msg.Error.Message)
+		return "", fmt.Errorf("codex app-server: %s", msg.Error.Message)
 	}
-	var init struct {
-		CodexHome string `json:"codexHome"`
-	}
+	var init codexInitialized
 	if err := json.Unmarshal(msg.Result, &init); err != nil {
-		return "", nil, fmt.Errorf("codex app-server returned unexpected output: %w", err)
+		return "", fmt.Errorf("codex app-server returned unexpected output: %w", err)
 	}
 
-	if err := enc.Encode(codexRequest{Method: "initialized"}); err != nil {
-		return "", nil, err
+	if err := enc.Encode(codexNotification{Method: "initialized"}); err != nil {
+		return "", err
 	}
-	for i, call := range calls {
-		id := i + 1
-		if err := enc.Encode(codexRequest{ID: &id, Method: call.Method, Params: call.Params}); err != nil {
-			return "", nil, err
-		}
+	if err := enc.Encode(codexRequest{ID: codexCallID, Method: method, Params: params}); err != nil {
+		return "", err
 	}
-	replies := make([]codexReply, len(calls))
-	for answered := 0; answered < len(calls); {
-		msg, err := next()
-		if err != nil {
-			return "", nil, err
-		}
-		if *msg.ID < 1 || *msg.ID > len(calls) {
-			continue
-		}
-		reply := codexReply{Result: msg.Result}
-		if msg.Error != nil {
-			reply.Err = errors.New(msg.Error.Message)
-		}
-		replies[*msg.ID-1] = reply
-		answered++
+	msg, err = reply(codexCallID)
+	if err != nil {
+		return "", err
 	}
-	return init.CodexHome, replies, nil
+	if msg.Error != nil {
+		return init.CodexHome, fmt.Errorf("codex %s: %s", method, msg.Error.Message)
+	}
+	if err := json.Unmarshal(msg.Result, result); err != nil {
+		return init.CodexHome, fmt.Errorf("codex %s returned unexpected output: %w", method, err)
+	}
+	return init.CodexHome, nil
 }
 
 func (c Codex) call(profileDir, method string, params, result any) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), codexRPCTimeout)
 	defer cancel()
-	return c.callContext(ctx, profileDir, method, params, result)
+	return c.rpc(ctx, profileDir, method, params, result)
 }
 
-func (c Codex) callContext(ctx context.Context, profileDir, method string, params, result any) (string, error) {
-	home, replies, err := c.rpc(ctx, profileDir, codexCall{Method: method, Params: params})
-	if err != nil {
-		return "", err
-	}
-	if replies[0].Err != nil {
-		return home, fmt.Errorf("codex %s: %w", method, replies[0].Err)
-	}
-	if err := json.Unmarshal(replies[0].Result, result); err != nil {
-		return home, fmt.Errorf("codex %s returned unexpected output: %w", method, err)
-	}
-	return home, nil
+type codexAccountReadParams struct {
+	RefreshToken bool `json:"refreshToken"`
 }
 
 // codexAccount is the subset of `account/read` csm reads; it never contains tokens.
 type codexAccount struct {
-	Account *struct {
-		Type  string `json:"type"`
-		Email string `json:"email"`
-	} `json:"account"`
+	Account *codexAccountInfo `json:"account"`
+}
+
+type codexAccountInfo struct {
+	Type  string `json:"type"`
+	Email string `json:"email"`
 }
 
 func (c Codex) Identity(profileDir string) (Identity, error) {
 	var res codexAccount
-	home, err := c.call(profileDir, "account/read", map[string]any{"refreshToken": false}, &res)
+	home, err := c.call(profileDir, "account/read", codexAccountReadParams{RefreshToken: false}, &res)
 	if err != nil {
 		return Identity{}, err
 	}
@@ -274,16 +269,33 @@ type codexThread struct {
 	UpdatedAt   int64  `json:"updatedAt"`
 }
 
+type codexThreadListParams struct {
+	Cwd     []string `json:"cwd"`
+	SortKey string   `json:"sortKey"`
+	Limit   int      `json:"limit"`
+}
+
+type codexThreadList struct {
+	Data []codexThread `json:"data"`
+}
+
+type codexThreadReadParams struct {
+	ThreadID     string `json:"threadId"`
+	IncludeTurns bool   `json:"includeTurns"`
+}
+
+type codexThreadRead struct {
+	Thread codexThread `json:"thread"`
+}
+
 // CurrentSession is the interactive thread most recently updated in cwd since the agent started.
 func (c Codex) CurrentSession(profileDir, cwd string, since time.Time) string {
 	cwds := []string{cwd}
 	if real, err := filepath.EvalSymlinks(cwd); err == nil && real != cwd {
 		cwds = append(cwds, real)
 	}
-	var res struct {
-		Data []codexThread `json:"data"`
-	}
-	params := map[string]any{"cwd": cwds, "sortKey": "updated_at", "limit": 1}
+	var res codexThreadList
+	params := codexThreadListParams{Cwd: cwds, SortKey: "updated_at", Limit: 1}
 	if _, err := c.call(profileDir, "thread/list", params, &res); err != nil || len(res.Data) == 0 {
 		return ""
 	}
@@ -295,10 +307,8 @@ func (c Codex) CurrentSession(profileDir, cwd string, since time.Time) string {
 
 // CarrySession copies a session's rollout file, kept under <profile>/sessions, to the same place in another profile.
 func (c Codex) CarrySession(fromProfile, toProfile, sessionID string) (Carried, error) {
-	var res struct {
-		Thread codexThread `json:"thread"`
-	}
-	if _, err := c.call(fromProfile, "thread/read", map[string]any{"threadId": sessionID, "includeTurns": false}, &res); err != nil {
+	var res codexThreadRead
+	if _, err := c.call(fromProfile, "thread/read", codexThreadReadParams{ThreadID: sessionID, IncludeTurns: false}, &res); err != nil {
 		return Carried{}, err
 	}
 	// Paginated history lives in a database, so the rollout file alone would resume as an empty session.
@@ -331,7 +341,7 @@ func (c Codex) LimitPollInterval() time.Duration { return time.Minute }
 
 func (c Codex) FetchUsage(ctx context.Context, profileDir string) (Usage, error) {
 	var res codexRateLimits
-	if _, err := c.callContext(ctx, profileDir, "account/rateLimits/read", nil, &res); err != nil {
+	if _, err := c.rpc(ctx, profileDir, "account/rateLimits/read", nil, &res); err != nil {
 		return Usage{}, err
 	}
 	return res.usage(), nil
@@ -343,17 +353,17 @@ type codexRateWindow struct {
 	WindowDurationMins int64   `json:"windowDurationMins"`
 }
 
-// codexRateLimits is the subset of `account/rateLimits/read` csm reads.
+// codexRateLimits is the subset of `account/rateLimits/read` csm reads; a field the server sends as null stays zero.
 type codexRateLimits struct {
 	RateLimits struct {
-		Primary         *codexRateWindow `json:"primary"`
-		Secondary       *codexRateWindow `json:"secondary"`
-		IndividualLimit *struct {
+		Primary         codexRateWindow `json:"primary"`
+		Secondary       codexRateWindow `json:"secondary"`
+		IndividualLimit struct {
 			RemainingPercent float64 `json:"remainingPercent"`
 			ResetsAt         int64   `json:"resetsAt"`
 		} `json:"individualLimit"`
-		RateLimitReachedType *string `json:"rateLimitReachedType"`
-		Credits              *struct {
+		RateLimitReachedType string `json:"rateLimitReachedType"`
+		Credits              struct {
 			HasCredits bool `json:"hasCredits"`
 			Unlimited  bool `json:"unlimited"`
 		} `json:"credits"`
@@ -363,8 +373,8 @@ type codexRateLimits struct {
 func (r codexRateLimits) usage() Usage {
 	var u Usage
 	limits := r.RateLimits
-	for i, w := range []*codexRateWindow{limits.Primary, limits.Secondary} {
-		if w == nil || w.ResetsAt == 0 {
+	for i, w := range []codexRateWindow{limits.Primary, limits.Secondary} {
+		if w.ResetsAt == 0 {
 			continue
 		}
 		window := UsageWindow{UsedPercent: w.UsedPercent, ResetsAt: time.Unix(w.ResetsAt, 0)}
@@ -376,11 +386,11 @@ func (r codexRateLimits) usage() Usage {
 			u.FiveHour = window
 		}
 	}
-	if l := limits.IndividualLimit; l != nil && l.ResetsAt != 0 {
+	if l := limits.IndividualLimit; l.ResetsAt != 0 {
 		u.SpendLimit = UsageWindow{UsedPercent: 100 - l.RemainingPercent, ResetsAt: time.Unix(l.ResetsAt, 0)}
 	}
 	// With credits the account keeps working past its plan limit, so it is not treated as limited.
-	onCredits := limits.Credits != nil && (limits.Credits.HasCredits || limits.Credits.Unlimited)
-	u.Limited = limits.RateLimitReachedType != nil && !onCredits
+	onCredits := limits.Credits.HasCredits || limits.Credits.Unlimited
+	u.Limited = limits.RateLimitReachedType != "" && !onCredits
 	return u
 }

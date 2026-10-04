@@ -85,11 +85,17 @@ type fakeCodexRequest struct {
 	} `json:"params"`
 }
 
+type fakeCodexResponse struct {
+	ID     int         `json:"id"`
+	Result any         `json:"result,omitempty"`
+	Error  *codexError `json:"error,omitempty"`
+}
+
 func fakeCodexAppServer(home, authFile string, limited bool) int {
 	out := json.NewEncoder(os.Stdout)
-	reply := func(id int, result any) { out.Encode(map[string]any{"id": id, "result": result}) }
+	reply := func(id int, result any) { out.Encode(fakeCodexResponse{ID: id, Result: result}) }
 	fail := func(id int, message string) {
-		out.Encode(map[string]any{"id": id, "error": map[string]any{"code": -32600, "message": message}})
+		out.Encode(fakeCodexResponse{ID: id, Error: &codexError{Message: message}})
 	}
 	email, authErr := os.ReadFile(authFile)
 
@@ -102,36 +108,36 @@ func fakeCodexAppServer(home, authFile string, limited bool) int {
 		id := *req.ID
 		switch req.Method {
 		case "initialize":
-			reply(id, map[string]any{"codexHome": home})
-			out.Encode(map[string]any{"method": "remoteControl/status/changed", "params": map[string]any{"status": "disabled"}})
+			reply(id, codexInitialized{CodexHome: home})
+			out.Encode(codexNotification{Method: "remoteControl/status/changed"})
 		case "account/read":
 			if authErr != nil {
-				reply(id, map[string]any{"account": nil, "requiresOpenaiAuth": true})
+				reply(id, codexAccount{})
 				continue
 			}
-			reply(id, map[string]any{"account": map[string]any{"type": "chatgpt", "email": string(email), "planType": "plus"}, "requiresOpenaiAuth": true})
+			reply(id, codexAccount{Account: &codexAccountInfo{Type: "chatgpt", Email: string(email)}})
 		case "account/rateLimits/read":
 			if authErr != nil {
 				fail(id, "codex account authentication required to read rate limits")
 				continue
 			}
-			primary := map[string]any{"usedPercent": 42, "resetsAt": time.Now().Add(2 * time.Hour).Unix(), "windowDurationMins": 300}
-			secondary := map[string]any{"usedPercent": 17, "resetsAt": time.Now().Add(72 * time.Hour).Unix(), "windowDurationMins": 10080}
-			limits := map[string]any{"primary": primary, "secondary": secondary, "rateLimitReachedType": nil}
+			var limits codexRateLimits
+			limits.RateLimits.Primary = codexRateWindow{UsedPercent: 42, ResetsAt: time.Now().Add(2 * time.Hour).Unix(), WindowDurationMins: 300}
+			limits.RateLimits.Secondary = codexRateWindow{UsedPercent: 17, ResetsAt: time.Now().Add(72 * time.Hour).Unix(), WindowDurationMins: 10080}
 			if limited {
-				primary["usedPercent"] = 100
-				limits["rateLimitReachedType"] = "rate_limit_reached"
+				limits.RateLimits.Primary.UsedPercent = 100
+				limits.RateLimits.RateLimitReachedType = "rate_limit_reached"
 			}
-			reply(id, map[string]any{"rateLimits": limits})
+			reply(id, limits)
 		case "thread/list":
-			reply(id, map[string]any{"data": fakeCodexThreads(home, req.Params.Cwd)})
+			reply(id, codexThreadList{Data: fakeCodexThreads(home, req.Params.Cwd)})
 		case "thread/read":
 			path := fakeCodexRollout(home, req.Params.ThreadID)
 			if _, err := os.Stat(path); err != nil {
 				fail(id, "thread not found: "+req.Params.ThreadID)
 				continue
 			}
-			reply(id, map[string]any{"thread": codexThread{ID: req.Params.ThreadID, Path: path, HistoryMode: "legacy"}})
+			reply(id, codexThreadRead{Thread: codexThread{ID: req.Params.ThreadID, Path: path, HistoryMode: "legacy"}})
 		default:
 			fail(id, "unknown method "+req.Method)
 		}
