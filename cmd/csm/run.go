@@ -137,9 +137,7 @@ func (r *runner) launch(acct *Account, args []string, sessionID string, sigs cha
 	os.Remove(filepath.Join(r.stateDir, requestFile))
 	os.Remove(filepath.Join(r.stateDir, providerSessionFile))
 
-	if r.features.Supervise {
-		args = append(r.provider.LaunchArgs(r.csmPath), args...)
-	}
+	args = append(r.provider.LaunchArgs(r.csmPath), args...)
 	cmd := exec.Command(r.provider.Executable(), args...)
 	cmd.Dir = r.cwd
 	cmd.Env = r.provider.Env(acct.ConfigDir,
@@ -268,7 +266,9 @@ func (r *runner) recordUsage(account string, check usageCheck) bool {
 		slog.Debug("usage check failed", "account", account, "err", check.err)
 		return false
 	}
-	r.state.saveUsage(UsageRecord{Version: stateVersion, Account: account, UpdatedAt: time.Now(), Usage: check.usage})
+	if err := r.state.saveUsage(UsageRecord{Version: stateVersion, Account: account, UpdatedAt: time.Now(), Usage: check.usage}); err != nil {
+		slog.Debug("save usage", "account", account, "err", err)
+	}
 	return check.usage.Limited
 }
 
@@ -318,7 +318,9 @@ func (r *runner) handleFailure(acct *Account, res *outcome, f provider.Failure, 
 		return
 	}
 	acct.CooldownUntil = time.Now().Add(usageCooldown)
-	r.state.save()
+	if err := r.state.save(); err != nil {
+		slog.Debug("save cooldown", "account", acct.Name, "err", err)
+	}
 	r.unavailable[acct.Name] = true
 
 	if !r.state.Config.AutoFailover {
