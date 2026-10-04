@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -22,10 +21,6 @@ func displayPath(path string) string {
 		return "~" + strings.TrimPrefix(path, home)
 	}
 	return path
-}
-
-func stdinIsTerminal() bool {
-	return isTerminal(os.Stdin.Fd())
 }
 
 func check(label string, ok bool) {
@@ -68,7 +63,10 @@ func cmdSetup(home string) error {
 	}
 	fmt.Println()
 	if ready == 0 {
-		return slices.Concat(broken, missing)[0]
+		if len(broken) > 0 {
+			return broken[0]
+		}
+		return missing[0]
 	}
 	for _, err := range broken {
 		fmt.Printf("%v\n\n", err)
@@ -132,10 +130,14 @@ func cmdDoctor(home string) error {
 	}
 
 	installed := 0
+	var firstMissing error
 	usable := map[string]provider.Provider{}
 	for _, id := range provider.IDs {
 		p, err := provider.Find(id)
 		if err != nil {
+			if firstMissing == nil {
+				firstMissing = err
+			}
 			label := providerName(id) + " executable"
 			if s != nil && len(s.accountNames(id)) > 0 {
 				fail(label, err.Error())
@@ -150,8 +152,7 @@ func cmdDoctor(home string) error {
 		}
 	}
 	if installed == 0 {
-		_, err := provider.Find(provider.ClaudeID)
-		fail("Coding agent", err.Error())
+		fail("Coding agent", firstMissing.Error())
 		return reportDoctor(problems)
 	}
 
@@ -184,7 +185,7 @@ func cmdDoctor(home string) error {
 		}
 	}
 
-	if stdinIsTerminal() {
+	if isTerminal(os.Stdin.Fd()) {
 		check("Interactive terminal", true)
 	} else {
 		fail("Interactive terminal", "stdin is not a terminal; the agent needs one")
@@ -740,7 +741,7 @@ func cmdRun(home, providerID string, args []string) (int, error) {
 		project:      detectProject(cwd),
 		out:          os.Stdout,
 		in:           bufio.NewReader(os.Stdin),
-		interactive:  stdinIsTerminal(),
+		interactive:  isTerminal(os.Stdin.Fd()),
 		unavailable:  map[string]bool{},
 	}
 	r.stateDir = s.projectStateDir(providerID, r.project.Dir)

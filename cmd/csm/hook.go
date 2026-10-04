@@ -29,7 +29,7 @@ func runHook(event string, stdin io.Reader) {
 	var p provider.Claude
 	switch event {
 	case "status-line":
-		runStatusLine(p, data)
+		runStatusLine(data)
 	case "session-start":
 		id, err := p.ParseSessionStart(data)
 		if err == nil && id != "" {
@@ -46,10 +46,10 @@ func runHook(event string, stdin io.Reader) {
 	}
 }
 
-func runStatusLine(p provider.Claude, data []byte) {
+func runStatusLine(data []byte) {
 	account, home := os.Getenv("CSM_ACCOUNT"), os.Getenv("CSM_HOME")
 	now := time.Now()
-	usage, err := p.ParseUsage(data)
+	usage, err := provider.Claude{}.ParseUsage(data)
 	if err == nil && !usage.Empty() && account != "" && home != "" {
 		s := &State{Home: home}
 		s.saveUsage(UsageRecord{Version: stateVersion, Account: account, UpdatedAt: now, Usage: usage})
