@@ -175,7 +175,69 @@ Handled in a separate spacing-only commit, across every non-generated Go file.
 
 ## Open questions
 
-Filled in at the end.
+None of these were changed. Each needs a decision.
+
+1. **Two staticcheck ST1005 findings.** `"Result: not ready"` (capitalised)
+   and the "already managing ... first." error (ends in a full stop). Fixing
+   them changes text the user sees.
+2. **`csm status` and a corrupt transition file.** `cmdStatus` ignores the
+   error from `loadTransition`, so a damaged `transition.json` is silently not
+   shown. The next `csm <agent>` run does report it. Showing it in `status`
+   would change that command's output. [12]
+3. **Unknown provider in `accounts.json`.** `providerName` falls back to the
+   raw ID when the provider is unknown. Validating the provider when the file
+   is loaded would let that fallback go, but a hand-edited file would then fail
+   at load instead of at use. [3, 50]
+4. **Spacing rules where the brief is ambiguous.** The brief's example puts a
+   blank line between `x, err := ...` and `if err != nil`, and after an opening
+   `for {`; its written rules forbid both. The written rules were followed.
+   "A blank line after a group of variable declarations" was applied to `var`
+   statements only, not to every `:=`. Every `defer` gets blank lines around
+   it, including `defer cancel()` directly after the context is created.
+   One-line methods are now separated by blank lines.
+5. **Struct field grouping.** Left as it was; no struct looked clearer with
+   extra blank lines.
+6. **Size of `provider.Provider`.** Kept as one interface (see "Left alone").
+   Worth revisiting if more agents are added.
+
+## Result
+
+All findings in sections 1 to 6 were fixed. Commits, oldest first:
+
+| Commit | Findings | Rules |
+| --- | --- | --- |
+| Return Provider from the Find functions | 1.1 | 10 |
+| Send one typed request per Codex app-server call | 2.1, 2.2, 2.3, 2.5 | 1, 4, 5, 6, 9, 18, 68, 74 |
+| Return errors from session lookup and plain values from session carry | 2.4, 3.1, 3.2, 3.3, 3.4 | 6, 12, 55 |
+| Use plain values for the Copilot CLI signed-in user | 4.1 | 5 |
+| Drop an always-true guard and log two ignored saves in the runner | 5.1, 5.2 | 12, 74 |
+| Simplify four spots in the commands | 6.1, 6.2, 6.3, 6.4 | 6, 10, 28, 53, 70, 74 |
+| Remove two comments that repeat the name and correct a stale one | 7 | 41 |
+| Apply the spacing and layout rules | 8 | brief section 6 |
+
+Behaviour: no command output, file format, flag or environment variable
+changed. The only visible difference is under `--debug`, which now logs a
+failed session lookup, a failed cooldown save and a failed usage save.
+
+Comments: 2 removed (they repeated the identifier), 1 rewritten (it described
+only two of the four agents). The rest explain a reason, an external quirk or
+what a returned value means, and were kept.
+
+Layout: blank lines were applied with a throwaway tool that is not part of the
+repo, then checked: ignoring whitespace and line order, only the three files
+with regrouped `const`/`var` blocks differ from the commit before.
+
+### Final checks, compared with the baseline
+
+| Check | Baseline | Final |
+| --- | --- | --- |
+| `gofmt -l cmd internal` | clean | clean |
+| `go build ./...` | ok | ok |
+| `go vet ./...` | ok | ok |
+| `go test ./...` | ok | ok |
+| `go test -race ./...` | ok | ok |
+| `csm test failover`, `csm test failover codex` | pass | pass |
+| `staticcheck ./...` | 2 findings (ST1005) | the same 2 findings |
 
 ## TODO and FIXME notes
 
