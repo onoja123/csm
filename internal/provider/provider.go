@@ -23,7 +23,6 @@ const (
 // IDs lists the supported providers; each ID is also the csm command that runs the agent.
 var IDs = []string{ClaudeID, CodexID, GeminiID, CopilotID}
 
-// Provider is what the core asks of one coding agent.
 type Provider interface {
 	ID() string
 	Name() string
@@ -176,7 +175,7 @@ type Identity struct {
 
 type Features struct {
 	Auth bool
-	// Supervise means csm can observe and own a session: hooks for Claude Code, the app-server and --no-daemon for Codex.
+	// Supervise means csm can observe and own a session: hooks for Claude Code, the app-server and --no-daemon for Codex, --session-id for Gemini CLI and Copilot CLI.
 	Supervise bool
 	Resume    bool
 	// SessionID means csm can choose the ID of a new session.

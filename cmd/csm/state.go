@@ -182,7 +182,6 @@ func (s *State) accountNames(providerID string) []string {
 	return s.namesOf(providerID, s.Config.AccountOrder)
 }
 
-// namesOf keeps the given accounts that belong to one provider.
 func (s *State) namesOf(providerID string, names []string) []string {
 	var group []string
 	for _, name := range names {
