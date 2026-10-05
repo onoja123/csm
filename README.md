@@ -17,9 +17,11 @@ Accounts only switch with accounts of the same agent. Different agents can run i
 
 ## Requirements
 
-- macOS (Linux builds but is untested)
+- macOS or Linux. Windows is not supported: csm does not build there yet.
 - Go 1.25 or newer
 - At least one of the agents above, installed and on your `PATH`
+
+csm is developed on macOS. On Linux its test suite and an end-to-end smoke test run on every push (GitHub Actions, Ubuntu); it has not yet been used with a real agent on Linux.
 
 ## Installation
 
@@ -194,6 +196,11 @@ Your working directory, branch and uncommitted changes are never touched. If a c
 ## Limitations
 
 - Codex, Gemini CLI and Copilot CLI support has not yet been tested with signed-in accounts. It was built against each CLI signed out and against fake agents.
+- Switching a running session between two real Claude Code accounts has been exercised with csm's fake agent, not yet with two signed-in accounts. See `docs/beta-checklist.md` for the manual test.
+- Windows does not build. csm relies on Unix signals, `/bin/sh` and symlinks.
+- If csm itself is killed with `SIGKILL`, the agent it started keeps running on its own and must be closed by hand. Ctrl+C, `SIGTERM` and closing the terminal stop the agent cleanly.
+- A second `csm use` or `csm next` sent while a switch is already in progress is acknowledged but ignored.
+- Outside a git repository, a project reached through a symlink gets its own state, separate from the same directory reached by its real path. Inside a git repository both resolve to the repository root.
 - Gemini CLI and Copilot CLI have no command that reports the signed-in account, so `csm` reads what the agent recorded at sign-in.
 - Gemini CLI has no login command. `csm account add` opens Gemini CLI; choose "Sign in with Google", then type `/quit`.
 - Copilot CLI keeps tokens in the macOS Keychain and falls back to your `gh` login when a profile has none of its own.
@@ -216,10 +223,11 @@ Your working directory, branch and uncommitted changes are never touched. If a c
 ```bash
 go build ./...
 go vet ./...
-go test ./...
+go test -race ./...
+go build -o csm ./cmd/csm && scripts/smoke.sh "$PWD/csm"
 ```
 
-The tests do not need a real agent. Each agent has a fake that runs through the `csm` binary.
+The tests do not need a real agent. Each agent has a fake that runs through the `csm` binary; `scripts/smoke.sh` drives the built binary through the account, switching, failover and recovery flows with those fakes. CI runs all of it on macOS and Ubuntu.
 
 ```
 cmd/csm/              the CLI: commands, state, runner, logger
