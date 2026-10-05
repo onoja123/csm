@@ -98,6 +98,10 @@ func TestCarrySession(t *testing.T) {
 		}
 	}
 
+	if _, _, err := (Claude{}).CarrySession(from, to, "../sid"); err == nil {
+		t.Fatal("a session ID with a path in it was accepted")
+	}
+
 	if resumeArgs, _, _ := (Claude{}).CarrySession(from, to, "missing"); len(resumeArgs) > 0 {
 		t.Fatal("carried a transcript that does not exist")
 	}

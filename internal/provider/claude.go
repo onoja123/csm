@@ -306,6 +306,10 @@ func classifyClaudeFailure(errorType, text string) StopReason {
 }
 
 func (c Claude) CarrySession(fromProfile, toProfile, sessionID string) ([]string, string, error) {
+	if sessionID != filepath.Base(sessionID) {
+		return nil, "", fmt.Errorf("unexpected Claude Code session ID %q", sessionID)
+	}
+
 	matches, err := filepath.Glob(filepath.Join(fromProfile, "projects", "*", sessionID+".jsonl"))
 
 	if err != nil || len(matches) == 0 {
