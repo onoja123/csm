@@ -274,3 +274,41 @@ func TestProvidersKeepSeparateAccounts(t *testing.T) {
 		t.Fatal("records without a provider must read as Claude Code")
 	}
 }
+
+func TestWriteJSONFromManyWritersAtOnce(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	const writers, rounds = 8, 50
+	errs := make(chan error, writers)
+
+	for range writers {
+		go func() {
+			for range rounds {
+				if err := writeJSON(path, Config{Version: stateVersion, AccountOrder: []string{"personal", "work", "backup"}}); err != nil {
+					errs <- err
+
+					return
+				}
+
+				var got Config
+				if err := readJSON(path, &got); err != nil {
+					errs <- err
+
+					return
+				}
+			}
+
+			errs <- nil
+		}()
+	}
+
+	for range writers {
+		if err := <-errs; err != nil {
+			t.Fatalf("a concurrent write or read failed: %v", err)
+		}
+	}
+
+	leftovers, _ := filepath.Glob(path + "*")
+	if len(leftovers) != 1 {
+		t.Fatalf("temporary files were left behind: %v", leftovers)
+	}
+}

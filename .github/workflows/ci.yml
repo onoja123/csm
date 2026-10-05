@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Format
+        run: test -z "$(gofmt -l cmd internal)"
+      - name: Vet
+        run: go vet ./...
+      - name: Build
+        run: go build -o csm ./cmd/csm
+      - name: Test
+        run: go test -race ./...
+      - name: Smoke test against the fake agents
+        run: ./scripts/smoke.sh "$PWD/csm"
+
+  cross-build:
+    name: build (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [darwin/amd64, darwin/arm64, linux/amd64, linux/arm64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build
+        run: GOOS=${TARGET%/*} GOARCH=${TARGET#*/} go build ./...
+        env:
+          TARGET: ${{ matrix.target }}
+
+  # Windows is not supported yet. This job records whether it builds and never fails the run.
+  windows:
+    name: build (windows, unsupported)
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build
+        run: go build ./...

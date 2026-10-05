@@ -154,13 +154,25 @@ func writeJSON(path string, v any) error {
 		return err
 	}
 
-	tmp := path + ".tmp"
-
-	if err := os.WriteFile(tmp, append(data, '\n'), 0o600); err != nil {
+	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
+	if err != nil {
 		return err
 	}
 
-	return os.Rename(tmp, path)
+	_, err = tmp.Write(append(data, '\n'))
+	if closeErr := tmp.Close(); err == nil {
+		err = closeErr
+	}
+
+	if err == nil {
+		err = os.Rename(tmp.Name(), path)
+	}
+
+	if err != nil {
+		os.Remove(tmp.Name())
+	}
+
+	return err
 }
 
 func readJSON(path string, v any) error {
