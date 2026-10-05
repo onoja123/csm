@@ -21,7 +21,7 @@ Accounts only switch with accounts of the same agent. Different agents can run i
 - Go 1.25 or newer
 - At least one of the agents above, installed and on your `PATH`
 
-csm is developed on macOS. On Linux its test suite and an end-to-end smoke test run on every push (GitHub Actions, Ubuntu); it has not yet been used with a real agent on Linux.
+csm is developed on macOS. On Linux its test suite runs on every push (GitHub Actions, Ubuntu); it has not yet been used with a real agent on Linux.
 
 ## Installation
 
@@ -196,7 +196,7 @@ Your working directory, branch and uncommitted changes are never touched. If a c
 ## Limitations
 
 - Codex, Gemini CLI and Copilot CLI support has not yet been tested with signed-in accounts. It was built against each CLI signed out and against fake agents.
-- Switching a running session between two real Claude Code accounts has been exercised with csm's fake agent, not yet with two signed-in accounts. See `docs/beta-checklist.md` for the manual test.
+- Switching a running session between two real Claude Code accounts has been exercised with csm's fake agent, not yet with two signed-in accounts.
 - Windows does not build. csm relies on Unix signals, `/bin/sh` and symlinks.
 - If csm itself is killed with `SIGKILL`, the agent it started keeps running on its own and must be closed by hand. Ctrl+C, `SIGTERM` and closing the terminal stop the agent cleanly.
 - A second `csm use` or `csm next` sent while a switch is already in progress is acknowledged but ignored.
@@ -224,10 +224,9 @@ Your working directory, branch and uncommitted changes are never touched. If a c
 go build ./...
 go vet ./...
 go test -race ./...
-go build -o csm ./cmd/csm && scripts/smoke.sh "$PWD/csm"
 ```
 
-The tests do not need a real agent. Each agent has a fake that runs through the `csm` binary; `scripts/smoke.sh` drives the built binary through the account, switching, failover and recovery flows with those fakes. CI runs all of it on macOS and Ubuntu.
+The tests do not need a real agent. Each agent has a fake that runs through the `csm` binary. CI runs the suite on macOS and Ubuntu.
 
 ```
 cmd/csm/              the CLI: commands, state, runner, logger

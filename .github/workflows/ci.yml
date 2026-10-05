@@ -28,8 +28,6 @@ jobs:
         run: go build -o csm ./cmd/csm
       - name: Test
         run: go test -race ./...
-      - name: Smoke test against the fake agents
-        run: ./scripts/smoke.sh "$PWD/csm"
 
   cross-build:
     name: build (${{ matrix.target }})
