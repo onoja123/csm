@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -310,5 +311,43 @@ func TestWriteJSONFromManyWritersAtOnce(t *testing.T) {
 	leftovers, _ := filepath.Glob(path + "*")
 	if len(leftovers) != 1 {
 		t.Fatalf("temporary files were left behind: %v", leftovers)
+	}
+}
+
+func TestUpdateKeepsEveryWritersChange(t *testing.T) {
+	home := newTestState(t).Home
+	const writers = 8
+	errs := make(chan error, writers)
+
+	for i := range writers {
+		go func() {
+			s, err := loadState(home)
+			if err != nil {
+				errs <- err
+
+				return
+			}
+
+			errs <- s.update(func(state *State) error {
+				_, err := state.addAccount(provider.ClaudeID, fmt.Sprintf("n%d", i), testNow)
+
+				return err
+			})
+		}()
+	}
+
+	for range writers {
+		if err := <-errs; err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	s, err := loadState(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(s.Accounts) != writers || len(s.Config.AccountOrder) != writers {
+		t.Fatalf("%d accounts and %d in the order survived %d simultaneous additions", len(s.Accounts), len(s.Config.AccountOrder), writers)
 	}
 }

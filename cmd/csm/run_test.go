@@ -93,7 +93,7 @@ func TestNetworkErrorDoesNotSwitch(t *testing.T) {
 	}
 }
 
-// switchWhenLive asks the running alpha session to move to beta as soon as it is up.
+// switchWhenLive asks the running alpha session to move to beta once the fake agent has written its transcript.
 func switchWhenLive(providerID string, requested chan<- error) func(home, projectDir string) {
 	return func(home, projectDir string) {
 		deadline := time.Now().Add(10 * time.Second)
@@ -101,7 +101,8 @@ func switchWhenLive(providerID string, requested chan<- error) func(home, projec
 		for time.Now().Before(deadline) {
 			s, err := loadState(home)
 			if err == nil {
-				if sess, live := s.loadLiveSession(providerID, projectDir); live && sess.Account == "alpha" {
+				sess, live := s.loadLiveSession(providerID, projectDir)
+				if live && sess.Account == "alpha" && transcriptWritten(filepath.Join(s.accountsDir(), "alpha")) {
 					requested <- requestSwitch(&Logger{out: io.Discard, err: io.Discard}, s, sess, "beta")
 
 					return
@@ -113,6 +114,21 @@ func switchWhenLive(providerID string, requested chan<- error) func(home, projec
 
 		requested <- errors.New("session never became live")
 	}
+}
+
+func transcriptWritten(profileDir string) bool {
+	found := false
+	filepath.WalkDir(profileDir, func(path string, d os.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			if data, err := os.ReadFile(path); err == nil && strings.Contains(string(data), `"profile":"alpha"`) {
+				found = true
+			}
+		}
+
+		return nil
+	})
+
+	return found
 }
 
 func TestManualSwitchOfRunningSession(t *testing.T) {

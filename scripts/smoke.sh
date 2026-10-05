@@ -159,7 +159,7 @@ says "Gemini CLI usage is reported as unavailable" "cannot report usage outside 
 check "cached usage succeeds" csm usage --cached
 
 echo "== switching a running session"
-running() { ls "$CSM_HOME"/projects/*/session.json; }
+running() { ls "$CSM_HOME"/projects/*/session.json && grep -rqs '"profile":"a1"' "$CSM_HOME/accounts/a1"; }
 CSM_FAKE_HOLD=a1 "$CSM_BIN" claude </dev/null >"$WORK/run.out" 2>&1 &
 pid=$!
 if wait_for running; then pass "the running session is recorded"; else fail "the running session is recorded"; fi
@@ -183,7 +183,7 @@ CSM_FAKE_HOLD=a1,cx1 "$CSM_BIN" claude </dev/null >"$WORK/claude.out" 2>&1 &
 claude_pid=$!
 CSM_FAKE_HOLD=a1,cx1 "$CSM_BIN" codex </dev/null >"$WORK/codex.out" 2>&1 &
 codex_pid=$!
-both() { [ "$(ls "$CSM_HOME"/projects/*/session.json | wc -l | tr -d ' ')" = 2 ]; }
+both() { [ "$(ls "$CSM_HOME"/projects/*/session.json | wc -l | tr -d ' ')" = 2 ] && grep -rqs '"profile":"cx1"' "$CSM_HOME/accounts/cx1" && grep -rqs '"profile":"a1"' "$CSM_HOME/accounts/a1"; }
 if wait_for both; then pass "both sessions run side by side"; else
 	fail "both sessions run side by side"
 	sed 's/^/      claude: /' "$WORK/claude.out"
@@ -209,7 +209,7 @@ for pair in gemini:g1:g2 copilot:cp1:cp2; do
 	to="${rest#*:}"
 	CSM_FAKE_HOLD="$from" "$CSM_BIN" "$agent" </dev/null >"$WORK/$agent.out" 2>&1 &
 	pid=$!
-	one() { ls "$CSM_HOME"/projects/*-"$agent"/session.json; }
+	one() { ls "$CSM_HOME"/projects/*-"$agent"/session.json && grep -rqs "\"profile\":\"$from\"" "$CSM_HOME/accounts/$from"; }
 	wait_for one
 	check "next $agent reaches the running session" csm next "$agent"
 	wait "$pid"

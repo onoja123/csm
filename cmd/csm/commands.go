@@ -556,11 +556,7 @@ func cmdAccount(log *Logger, home string, args []string) error {
 
 		dir := a.ConfigDir
 
-		if err := s.removeAccount(name); err != nil {
-			return err
-		}
-
-		if err := s.save(); err != nil {
+		if err := s.update(func(state *State) error { return state.removeAccount(name) }); err != nil {
 			return err
 		}
 
@@ -569,14 +565,17 @@ func cmdAccount(log *Logger, home string, args []string) error {
 		return nil
 
 	case "enable", "disable":
-		a, err := s.resolveAccount(name)
+		err := s.update(func(state *State) error {
+			a, err := state.resolveAccount(name)
+			if err != nil {
+				return err
+			}
+
+			a.Enabled = sub == "enable"
+
+			return nil
+		})
 		if err != nil {
-			return err
-		}
-
-		a.Enabled = sub == "enable"
-
-		if err := s.save(); err != nil {
 			return err
 		}
 
@@ -636,7 +635,14 @@ func accountAdd(log *Logger, s *State, providerID, name string, linkSettings boo
 		return err
 	}
 
-	if err := s.save(); err != nil {
+	err = s.update(func(state *State) error {
+		_, err := state.addAccount(p.ID(), name, time.Now())
+
+		return err
+	})
+	if err != nil {
+		os.RemoveAll(a.ConfigDir)
+
 		return err
 	}
 
@@ -657,17 +663,25 @@ func accountLogin(log *Logger, s *State, p provider.Provider, a *Account) error 
 		return err
 	}
 
-	for _, other := range s.Accounts {
-		if other.Name != a.Name && other.providerID() == p.ID() && other.Email != "" && other.Email == st.Email {
-			return fmt.Errorf("the %s profile identifies as %s, which is already the %s account.\n\nEither the same account was used twice, or credentials are shared across\nprofiles. csm will not mark %s ready. Log in with a different account:\n\n    csm account login %s", a.Name, st.Email, other.Name, a.Name, a.Name)
+	err = s.update(func(state *State) error {
+		for _, other := range state.Accounts {
+			if other.Name != a.Name && other.providerID() == p.ID() && other.Email != "" && other.Email == st.Email {
+				return fmt.Errorf("the %s profile identifies as %s, which is already the %s account.\n\nEither the same account was used twice, or credentials are shared across\nprofiles. csm will not mark %s ready. Log in with a different account:\n\n    csm account login %s", a.Name, st.Email, other.Name, a.Name, a.Name)
+			}
 		}
-	}
 
-	a.Email = st.Email
-	a.VerifiedAt = time.Now()
-	a.CooldownUntil = time.Time{}
+		acct, err := state.resolveAccount(a.Name)
+		if err != nil {
+			return err
+		}
 
-	if err := s.save(); err != nil {
+		acct.Email = st.Email
+		acct.VerifiedAt = time.Now()
+		acct.CooldownUntil = time.Time{}
+
+		return nil
+	})
+	if err != nil {
 		return err
 	}
 
@@ -756,9 +770,12 @@ func selectAccount(log *Logger, s *State, target *Account) error {
 		return requestSwitch(log, s, sess, target.Name)
 	}
 
-	s.setActive(p.ID(), target.Name)
+	err = s.update(func(state *State) error {
+		state.setActive(p.ID(), target.Name)
 
-	if err := s.save(); err != nil {
+		return nil
+	})
+	if err != nil {
 		return err
 	}
 
@@ -836,9 +853,12 @@ func cmdAuto(log *Logger, home string, args []string) error {
 
 	switch args[0] {
 	case "on", "off":
-		s.Config.AutoFailover = args[0] == "on"
+		err := s.update(func(state *State) error {
+			state.Config.AutoFailover = args[0] == "on"
 
-		if err := s.save(); err != nil {
+			return nil
+		})
+		if err != nil {
 			return err
 		}
 

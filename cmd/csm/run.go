@@ -161,9 +161,17 @@ func (r *runner) launch(acct *Account, args []string, sessionID string, sigs cha
 	}
 
 	startedAt := time.Now()
-	acct.LastUsedAt = startedAt
+	err := r.state.update(func(state *State) error {
+		a, err := state.resolveAccount(acct.Name)
+		if err != nil {
+			return err
+		}
 
-	if err := r.state.save(); err != nil {
+		a.LastUsedAt = startedAt
+
+		return nil
+	})
+	if err != nil {
 		return outcome{}, err
 	}
 
@@ -350,23 +358,20 @@ func (r *runner) handleFailure(acct *Account, res *outcome, f provider.Failure, 
 		return
 	}
 
-	fresh, err := loadState(r.state.Home)
+	err := r.state.update(func(state *State) error {
+		a, err := state.resolveAccount(acct.Name)
+		if err != nil {
+			return err
+		}
+
+		a.CooldownUntil = time.Now().Add(usageCooldown)
+
+		return nil
+	})
 	if err != nil {
-		slog.Debug("reload state", "err", err)
-
-		return
-	}
-
-	*r.state = *fresh
-	acct, err = r.state.resolveAccount(acct.Name)
-	if err != nil {
-		return
-	}
-
-	acct.CooldownUntil = time.Now().Add(usageCooldown)
-
-	if err := r.state.save(); err != nil {
 		slog.Debug("save cooldown", "account", acct.Name, "err", err)
+
+		return
 	}
 
 	r.unavailable[acct.Name] = true
@@ -476,9 +481,12 @@ func (r *runner) switchAccount(from *Account, to string, res outcome) ([]string,
 		return nil, "", err
 	}
 
-	r.state.setActive(r.provider.ID(), to)
+	err = r.state.update(func(state *State) error {
+		state.setActive(r.provider.ID(), to)
 
-	if err := r.state.save(); err != nil {
+		return nil
+	})
+	if err != nil {
 		return nil, "", err
 	}
 
@@ -589,9 +597,12 @@ func (r *runner) recoverTransition() (*recovery, error) {
 	}
 
 	r.step("Target account "+to.Name+" verified", true)
-	r.state.setActive(r.provider.ID(), to.Name)
+	err = r.state.update(func(state *State) error {
+		state.setActive(r.provider.ID(), to.Name)
 
-	if err := r.state.save(); err != nil {
+		return nil
+	})
+	if err != nil {
 		return nil, err
 	}
 

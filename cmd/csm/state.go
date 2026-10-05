@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"slices"
 	"strconv"
+	"syscall"
 	"time"
 
 	"github.com/onoja123/csm/internal/provider"
@@ -146,6 +147,37 @@ func (s *State) save() error {
 	}
 
 	return writeJSON(s.accountsPath(), accountsFile{Version: stateVersion, Accounts: s.Accounts})
+}
+
+// update applies fn to the state as it is on disk, under a lock shared by every csm process, then adopts the result.
+func (s *State) update(fn func(*State) error) error {
+	lock, err := os.OpenFile(filepath.Join(s.Home, "lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return err
+	}
+
+	defer lock.Close()
+
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+		return err
+	}
+
+	fresh, err := loadState(s.Home)
+	if err != nil {
+		return err
+	}
+
+	if err := fn(fresh); err != nil {
+		return err
+	}
+
+	if err := fresh.save(); err != nil {
+		return err
+	}
+
+	*s = *fresh
+
+	return nil
 }
 
 func writeJSON(path string, v any) error {
