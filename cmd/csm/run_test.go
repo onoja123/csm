@@ -445,3 +445,50 @@ func TestHookWritesEventAndIgnoresOutsideCSM(t *testing.T) {
 		t.Fatalf("got %+v %v", f, err)
 	}
 }
+
+// A Claude Code stand-in whose every profile reports the same account.
+func sameAccountShim(t *testing.T) string {
+	t.Helper()
+	shim := filepath.Join(t.TempDir(), "claude")
+	script := "#!/bin/sh\n" +
+		"if [ \"$1 $2\" = \"auth status\" ]; then printf '{\"loggedIn\":true,\"email\":\"shared@example.test\",\"configDirectory\":\"%s\"}\\n' \"$CLAUDE_CONFIG_DIR\"; exit 0; fi\n" +
+		"if [ \"$1 $2\" = \"auth login\" ]; then exit 0; fi\n" +
+		"exec '" + testBinary(t) + "' __fake-claude \"$@\"\n"
+	if err := os.WriteFile(shim, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	return shim
+}
+
+func TestAccountLoginRejectsASecondProfileWithTheSameIdentity(t *testing.T) {
+	p := provider.Claude{Path: sameAccountShim(t)}
+	s := newTestState(t)
+	log := &Logger{out: io.Discard, err: io.Discard}
+
+	for _, name := range []string{"first", "second"} {
+		if _, err := s.addAccount(provider.ClaudeID, name, testNow); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := s.save(); err != nil {
+		t.Fatal(err)
+	}
+
+	first, _ := s.resolveAccount("first")
+	if err := accountLogin(log, s, p, first); err != nil {
+		t.Fatalf("first login: %v", err)
+	}
+
+	second, _ := s.resolveAccount("second")
+	err := accountLogin(log, s, p, second)
+	if err == nil || !strings.Contains(err.Error(), "already the first account") {
+		t.Fatalf("a second profile with the same identity was accepted: %v", err)
+	}
+
+	second, _ = s.resolveAccount("second")
+	if !second.VerifiedAt.IsZero() || second.Email != "" {
+		t.Fatalf("the rejected profile was marked ready: %+v", second)
+	}
+}
