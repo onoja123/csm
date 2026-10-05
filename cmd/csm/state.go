@@ -24,8 +24,7 @@ var (
 )
 
 type Config struct {
-	Version int `json:"version"`
-	// ActiveAccount is the active Claude Code account; other providers are in ActiveByProvider.
+	Version          int               `json:"version"`
 	ActiveAccount    string            `json:"active_account"`
 	ActiveByProvider map[string]string `json:"active_by_provider,omitempty"`
 	AccountOrder     []string          `json:"account_order"`
@@ -33,8 +32,7 @@ type Config struct {
 }
 
 type Account struct {
-	Name string `json:"name"`
-	// Provider is empty for accounts created before csm supported more than Claude Code.
+	Name          string    `json:"name"`
 	Provider      string    `json:"provider,omitempty"`
 	Enabled       bool      `json:"enabled"`
 	ConfigDir     string    `json:"config_dir"`
@@ -50,7 +48,6 @@ type accountsFile struct {
 	Accounts []Account `json:"accounts"`
 }
 
-// State is everything csm persists globally. Paths are derived from Home.
 type State struct {
 	Home     string
 	Config   Config
@@ -86,6 +83,7 @@ func initState(home string) (*State, error) {
 	}
 
 	s, err := loadState(home)
+
 	if errors.Is(err, errNotSetUp) {
 		s = &State{Home: home, Config: Config{Version: stateVersion}}
 
@@ -99,6 +97,7 @@ func loadState(home string) (*State, error) {
 	s := &State{Home: home}
 
 	data, err := os.ReadFile(s.configPath())
+
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, errNotSetUp
 	}
@@ -116,6 +115,7 @@ func loadState(home string) (*State, error) {
 	}
 
 	data, err = os.ReadFile(s.accountsPath())
+
 	if errors.Is(err, os.ErrNotExist) {
 		return s, nil
 	}
@@ -140,6 +140,7 @@ func loadState(home string) (*State, error) {
 }
 
 func (s *State) save() error {
+
 	if err := writeJSON(s.configPath(), s.Config); err != nil {
 		return err
 	}
@@ -147,7 +148,6 @@ func (s *State) save() error {
 	return writeJSON(s.accountsPath(), accountsFile{Version: stateVersion, Accounts: s.Accounts})
 }
 
-// writeJSON writes via rename so a crash never leaves a half-written file.
 func writeJSON(path string, v any) error {
 	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
@@ -165,6 +165,7 @@ func writeJSON(path string, v any) error {
 
 func readJSON(path string, v any) error {
 	data, err := os.ReadFile(path)
+
 	if err != nil {
 		return err
 	}
@@ -208,7 +209,6 @@ func (s *State) setActive(providerID, name string) {
 	s.Config.ActiveByProvider[providerID] = name
 }
 
-// accountNames lists one provider's accounts in switching order.
 func (s *State) accountNames(providerID string) []string {
 	return s.namesOf(providerID, s.Config.AccountOrder)
 }
@@ -237,7 +237,6 @@ func (s *State) providersInUse() []string {
 	return ids
 }
 
-// resolveAccount accepts an account name or its 1-based position in the order.
 func (s *State) resolveAccount(nameOrIndex string) (*Account, error) {
 	if n, err := strconv.Atoi(nameOrIndex); err == nil {
 		if n < 1 || n > len(s.Config.AccountOrder) {
@@ -283,6 +282,7 @@ func (s *State) addAccount(providerID, name string, now time.Time) (*Account, er
 
 func (s *State) removeAccount(name string) error {
 	i := slices.IndexFunc(s.Accounts, func(a Account) bool { return a.Name == name })
+
 	if i < 0 {
 		return fmt.Errorf("no account named %q", name)
 	}

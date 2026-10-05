@@ -46,7 +46,6 @@ func detectProject(cwd string) Project {
 	return p
 }
 
-// gitStatusShort is read-only context for handoffs; csm never modifies git state.
 func gitStatusShort(dir string) string {
 	out, err := exec.Command("git", "-C", dir, "status", "--short", "--branch").Output()
 	if err != nil {
@@ -62,7 +61,6 @@ func projectID(dir string) string {
 	return filepath.Base(dir) + "-" + hex.EncodeToString(sum[:])[:12]
 }
 
-// Each provider keeps its own state for a project, so two agents can run in one project side by side.
 func (s *State) projectStateDir(providerID, dir string) string {
 	id := projectID(dir)
 
@@ -73,7 +71,6 @@ func (s *State) projectStateDir(providerID, dir string) string {
 	return filepath.Join(s.projectsDir(), id)
 }
 
-// Session is the live record of a csm-managed agent process for one project.
 type Session struct {
 	Version    int       `json:"version"`
 	Provider   string    `json:"provider,omitempty"`
@@ -85,7 +82,6 @@ type Session struct {
 	StartedAt  time.Time `json:"started_at"`
 }
 
-// Checkpoint is handoff metadata only; the conversation lives in the agent's own transcript.
 type Checkpoint struct {
 	Version        int                 `json:"version"`
 	Provider       string              `json:"provider,omitempty"`
@@ -99,7 +95,6 @@ type Checkpoint struct {
 	Detail         string              `json:"detail,omitempty"`
 }
 
-// A leftover transition file means a switch was interrupted.
 type Transition struct {
 	Version    int                 `json:"version"`
 	Provider   string              `json:"provider,omitempty"`
@@ -112,7 +107,6 @@ type Transition struct {
 	StartedAt  time.Time           `json:"started_at"`
 }
 
-// SwitchRequest asks a running csm session to move to another account.
 type SwitchRequest struct {
 	To          string    `json:"to"`
 	RequestedAt time.Time `json:"requested_at"`

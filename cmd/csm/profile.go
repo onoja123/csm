@@ -21,9 +21,9 @@ func samePath(a, b string) bool {
 	return ra == rb
 }
 
-// verifyProfile fails unless the provider reports this profile's directory, a login, and the recorded identity.
 func verifyProfile(p provider.Provider, a *Account) (provider.Identity, error) {
 	id, err := p.Identity(a.ConfigDir)
+
 	if err != nil {
 		return id, err
 	}
@@ -43,9 +43,9 @@ func verifyProfile(p provider.Provider, a *Account) (provider.Identity, error) {
 	return id, nil
 }
 
-// A login visible in an empty profile means credentials leak in from shared storage.
 func checkFreshProfileIsolated(p provider.Provider, profileDir string) error {
 	id, err := p.Identity(profileDir)
+
 	if err != nil {
 		return err
 	}
@@ -63,6 +63,7 @@ func checkFreshProfileIsolated(p provider.Provider, profileDir string) error {
 
 func probeIsolation(s *State, p provider.Provider) error {
 	dir, err := os.MkdirTemp(s.accountsDir(), ".probe-")
+
 	if err != nil {
 		return err
 	}

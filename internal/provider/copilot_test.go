@@ -17,7 +17,6 @@ func TestCopilotIdentity(t *testing.T) {
 		t.Fatalf("empty profile: %+v %v", id, err)
 	}
 
-	// Written by the real Copilot CLI 1.0.91 on a signed-out first launch.
 	os.WriteFile(config, []byte("// User settings belong in settings.json.\n// This file is managed automatically.\n{\n  \"firstLaunchAt\": \"2026-10-03T21:44:48.182Z\"\n}\n"), 0o600)
 
 	if id, err := c.Identity(profile); err != nil || id.LoggedIn {
@@ -74,6 +73,7 @@ func TestCopilotSessions(t *testing.T) {
 	}
 
 	resumeArgs, sessionID, err := c.CarrySession(from, to, "current")
+
 	if err != nil || !slices.Equal(resumeArgs, []string{"--resume", "current"}) || sessionID != "current" {
 		t.Fatalf("resumeArgs=%v sessionID=%q err=%v", resumeArgs, sessionID, err)
 	}

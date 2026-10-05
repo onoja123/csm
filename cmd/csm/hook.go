@@ -14,7 +14,6 @@ import (
 	"github.com/onoja123/csm/internal/provider"
 )
 
-// Only status-line may print (session-start stdout enters the agent's context); nothing here may fail the agent.
 func runHook(event string, stdin io.Reader) {
 	stateDir := os.Getenv("CSM_STATE_DIR")
 	pid, _ := strconv.Atoi(os.Getenv("CSM_PID"))

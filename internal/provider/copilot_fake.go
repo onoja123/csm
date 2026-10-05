@@ -11,7 +11,6 @@ import (
 	"time"
 )
 
-// CSM_FAKE_HOLD profiles run until stopped.
 func RunFakeCopilot(args []string) int {
 	home := os.Getenv("COPILOT_HOME")
 	profile := filepath.Base(home)
@@ -59,6 +58,7 @@ func RunFakeCopilot(args []string) int {
 	os.MkdirAll(dir, 0o700)
 	os.WriteFile(filepath.Join(dir, "workspace.yaml"), fmt.Appendf(nil, "id: %s\ncwd: %s\n", sessionID, cwd), 0o600)
 	f, err := os.OpenFile(filepath.Join(dir, "events.jsonl"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+
 	if err != nil {
 		return 1
 	}

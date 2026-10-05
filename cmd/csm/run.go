@@ -20,11 +20,9 @@ import (
 )
 
 const (
-	stopGracePeriod  = 10 * time.Second
-	usageCooldown    = time.Hour
-	exitCheckTimeout = 10 * time.Second
-
-	// Written by the session-start hook; the ID changes on /clear or /resume.
+	stopGracePeriod     = 10 * time.Second
+	usageCooldown       = time.Hour
+	exitCheckTimeout    = 10 * time.Second
 	providerSessionFile = "provider-session.json"
 )
 
@@ -33,21 +31,18 @@ type providerSession struct {
 }
 
 type runner struct {
-	state    *State
-	provider provider.Provider
-	csmPath  string
-	features provider.Features
-	// pollInterval is how often usage is checked for a reached limit; zero means the agent reports limits itself.
+	state        *State
+	provider     provider.Provider
+	csmPath      string
+	features     provider.Features
 	pollInterval time.Duration
 	cwd          string
 	project      Project
 	stateDir     string
-	out          io.Writer
+	log          *Logger
 	in           *bufio.Reader
-	// interactive is false under `csm test failover` and when stdin is not a TTY.
-	interactive bool
-	// Accounts limited during this run, so failover pauses instead of cycling.
-	unavailable map[string]bool
+	interactive  bool
+	unavailable  map[string]bool
 }
 
 type usageCheck struct {
@@ -73,7 +68,7 @@ func (r *runner) step(label string, ok bool) {
 		mark = "–"
 	}
 
-	fmt.Fprintf(r.out, "  %-34s %s\n", label, mark)
+	r.log.Info("  %-34s %s", label, mark)
 }
 
 func (r *runner) run(userArgs []string) (int, error) {
@@ -239,7 +234,6 @@ wait:
 		case sig := <-sigs:
 			switch sig {
 			case syscall.SIGINT:
-				// The terminal already delivered it to the agent, which shares our process group.
 				interrupted = true
 
 			case syscall.SIGTERM, syscall.SIGHUP:
@@ -263,7 +257,7 @@ wait:
 	}
 
 	if killTimer != nil && !killTimer.Stop() {
-		// The agent was killed without restoring the terminal.
+
 		sane := exec.Command("stty", "sane")
 		sane.Stdin = os.Stdin
 		sane.Run()
@@ -280,7 +274,6 @@ wait:
 		}
 	}
 
-	// A limit reached since the last poll would otherwise be missed, and with it the offer to switch and resume.
 	if r.pollInterval > 0 && r.interactive && !userStopped && res.switchTo == "" && res.reason != provider.StopReasonUsageLimit {
 		if r.recordUsage(accountName, r.fetchUsage(profileDir, exitCheckTimeout)) {
 			r.handleFailure(acct, &res, r.limitFailure(), true, func() {})
@@ -302,7 +295,6 @@ func (r *runner) fetchUsage(profileDir string, timeout time.Duration) usageCheck
 	return usageCheck{usage: usage, err: err}
 }
 
-// recordUsage saves a usage check and reports whether the account has reached its limit.
 func (r *runner) recordUsage(account string, check usageCheck) bool {
 	if check.err != nil {
 		slog.Debug("usage check failed", "account", account, "err", check.err)
@@ -344,7 +336,6 @@ func (r *runner) currentSessionID(acct *Account, since time.Time, fallback strin
 	return fallback
 }
 
-// userStopped also covers an agent that has already exited: the limit is recorded but nothing switches by itself.
 func (r *runner) handleFailure(acct *Account, res *outcome, f provider.Failure, userStopped bool, stop func()) {
 	res.failure = f
 	res.reason = f.Reason
@@ -434,7 +425,6 @@ func (r *runner) handleSwitchRequest(acct *Account, res *outcome, stop func()) {
 	stop()
 }
 
-// Usually runs while the old agent is still alive, before it is stopped.
 func (r *runner) beginSwitch(from *Account, to string, res *outcome) {
 	res.sessionID = r.currentSessionID(from, res.startedAt, res.sessionID)
 	now := time.Now()
@@ -464,24 +454,24 @@ func (r *runner) beginSwitch(from *Account, to string, res *outcome) {
 
 func (r *runner) switchAccount(from *Account, to string, res outcome) ([]string, string, error) {
 	if res.switchTo == "" {
-		// Switch confirmed after exit, so nothing was checkpointed yet.
 		r.beginSwitch(from, to, &res)
 	}
 
-	fmt.Fprintln(r.out)
-	fmt.Fprintln(r.out, "Code Session Manager")
-	fmt.Fprintln(r.out)
+	r.log.Blank()
+	r.log.Info("Code Session Manager")
+	r.log.Blank()
 
 	if res.reason == provider.StopReasonManualSwitch {
-		fmt.Fprintf(r.out, "Switching %s → %s.\n\n", from.Name, to)
+		r.log.Info("Switching %s → %s.\n", from.Name, to)
 	} else {
-		fmt.Fprintf(r.out, "%s account became unavailable.\nReason: %s\n\n", from.Name, res.reason.Describe())
+		r.log.Info("%s account became unavailable.\nReason: %s\n", from.Name, res.reason.Describe())
 	}
 
 	r.step("Saving checkpoint", true)
 	r.step("Stopping "+r.provider.Name(), true)
 
 	target, err := r.state.resolveAccount(to)
+
 	if err != nil {
 		return nil, "", err
 	}
@@ -499,7 +489,6 @@ func (r *runner) switchAccount(from *Account, to string, res outcome) ([]string,
 	return args, sessionID, nil
 }
 
-// Falls back to a fresh session with a handoff note when the transcript is missing.
 func (r *runner) handoffArgs(from, to *Account, sessionID string) (args []string, sessionIDOut string, resumed bool) {
 	if sessionID != "" && r.features.CanContinue() {
 		resumeArgs, newSessionID, err := r.provider.CarrySession(from.ConfigDir, to.ConfigDir, sessionID)
@@ -520,6 +509,7 @@ func (r *runner) handoffArgs(from, to *Account, sessionID string) (args []string
 }
 
 func (r *runner) printRestore(to string, resumed bool) {
+
 	if resumed {
 		r.step("Restoring session", true)
 	} else {
@@ -527,17 +517,17 @@ func (r *runner) printRestore(to string, resumed bool) {
 	}
 
 	r.step("Starting "+r.provider.Name()+" as "+to, true)
-	fmt.Fprintln(r.out)
+	r.log.Blank()
 
 	if resumed {
-		fmt.Fprintln(r.out, "The request that hit the limit was not retried; send it again or type \"continue\".")
+		r.log.Info("The request that hit the limit was not retried; send it again or type \"continue\".")
 	} else if r.features.SystemPrompt {
-		fmt.Fprintf(r.out, "The conversation could not be carried over. Starting a new %s session\nin the same project with a handoff note.\n", r.provider.Name())
+		r.log.Info("The conversation could not be carried over. Starting a new %s session\nin the same project with a handoff note.", r.provider.Name())
 	} else {
-		fmt.Fprintf(r.out, "The conversation could not be carried over. Starting a new %s session\nin the same project.\n", r.provider.Name())
+		r.log.Info("The conversation could not be carried over. Starting a new %s session\nin the same project.", r.provider.Name())
 	}
 
-	fmt.Fprintln(r.out)
+	r.log.Blank()
 }
 
 func (r *runner) handoffNote(fromAccount string) string {
@@ -560,11 +550,12 @@ type recovery struct {
 
 func (r *runner) recoverTransition() (*recovery, error) {
 	t, ok, err := r.state.loadTransition(r.provider.ID(), r.project.Dir)
+
 	if err != nil || !ok || processAlive(t.CSMPID) {
 		return nil, err
 	}
 
-	fmt.Fprintf(r.out, "Previous switch did not complete: %s → %s\n\n", t.From, t.To)
+	r.log.Info("Previous switch did not complete: %s → %s\n", t.From, t.To)
 
 	if !r.state.Config.AutoFailover && !r.confirm("Resume the handoff? [Y/n] ") {
 		os.Remove(filepath.Join(r.stateDir, transitionFile))
@@ -572,13 +563,15 @@ func (r *runner) recoverTransition() (*recovery, error) {
 		return nil, nil
 	}
 
-	fmt.Fprintln(r.out, "Recovering previous account switch...")
+	r.log.Info("Recovering previous account switch...")
 	from, err := r.state.resolveAccount(t.From)
+
 	if err != nil {
 		return nil, err
 	}
 
 	to, err := r.state.resolveAccount(t.To)
+
 	if err != nil {
 		return nil, fmt.Errorf("the switch target %q no longer exists; run: csm accounts", t.To)
 	}
@@ -614,18 +607,18 @@ func (r *runner) report(acct *Account, res outcome) {
 		return
 
 	case provider.StopReasonUsageLimit:
-		fmt.Fprintf(r.out, "\n%s reported a usage limit on %s.\n", r.provider.Name(), acct.Name)
+		r.log.Info("\n%s reported a usage limit on %s.", r.provider.Name(), acct.Name)
 
 		switch {
 		case res.noneLeft:
-			fmt.Fprintln(r.out, "All configured accounts are currently unavailable. Automatic failover paused.")
+			r.log.Info("All configured accounts are currently unavailable. Automatic failover paused.")
 		case res.autoDisabled:
-			fmt.Fprintln(r.out, "Automatic failover is off (enable with: csm auto on).")
+			r.log.Info("Automatic failover is off (enable with: csm auto on).")
 		}
 
 	case provider.StopReasonUnknown:
 		if res.failure.Error == "" {
-			fmt.Fprintf(r.out, "\n%s exited with status %d. No account switch was made.\n", r.provider.Name(), res.exitCode)
+			r.log.Info("\n%s exited with status %d. No account switch was made.", r.provider.Name(), res.exitCode)
 
 			return
 		}
@@ -633,21 +626,21 @@ func (r *runner) report(acct *Account, res outcome) {
 		fallthrough
 
 	default:
-		fmt.Fprintf(r.out, "\n%s returned an error on %s: %s\n", r.provider.Name(), acct.Name, res.reason.Describe())
+		r.log.Info("\n%s returned an error on %s: %s", r.provider.Name(), acct.Name, res.reason.Describe())
 
 		if res.failure.Message != "" {
-			fmt.Fprintf(r.out, "  %s\n", res.failure.Message)
+			r.log.Info("  %s", res.failure.Message)
 		}
 
-		fmt.Fprintln(r.out, "Automatic account switching only happens for a known usage limit.")
+		r.log.Info("Automatic account switching only happens for a known usage limit.")
 
 		if res.reason == provider.StopReasonAuthentication {
-			fmt.Fprintf(r.out, "\nRun:\n\n    csm account login %s\n", acct.Name)
+			r.log.Info("\nRun:\n\n    csm account login %s", acct.Name)
 
 			return
 		}
 
-		fmt.Fprintln(r.out, "\nRun: csm status")
+		r.log.Info("\nRun: csm status")
 	}
 }
 
@@ -656,8 +649,9 @@ func (r *runner) confirm(prompt string) bool {
 		return false
 	}
 
-	fmt.Fprint(r.out, prompt)
+	r.log.Prompt(prompt)
 	line, err := r.in.ReadString('\n')
+
 	if err != nil && !errors.Is(err, io.EOF) {
 		return false
 	}
@@ -675,6 +669,7 @@ func exitCode(err error) int {
 	var exitErr *exec.ExitError
 
 	if errors.As(err, &exitErr) {
+
 		if ws, ok := exitErr.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
 			return 128 + int(ws.Signal())
 		}

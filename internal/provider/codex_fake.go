@@ -13,7 +13,6 @@ import (
 	"time"
 )
 
-// CSM_FAKE_LIMIT profiles report a reached limit; CSM_FAKE_HOLD profiles run until stopped.
 func RunFakeCodex(args []string) int {
 	home := os.Getenv("CODEX_HOME")
 	authFile := filepath.Join(home, "fake-auth")
@@ -61,6 +60,7 @@ func RunFakeCodex(args []string) int {
 	cwd, _ := os.Getwd()
 	os.MkdirAll(filepath.Dir(rollout), 0o700)
 	f, err := os.OpenFile(rollout, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+
 	if err != nil {
 		return 1
 	}
@@ -183,6 +183,7 @@ func fakeCodexThreads(home string, cwds []string) []codexThread {
 
 	for _, path := range matches {
 		f, err := os.Open(path)
+
 		if err != nil {
 			continue
 		}

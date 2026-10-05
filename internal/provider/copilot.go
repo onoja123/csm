@@ -50,6 +50,7 @@ func (c Copilot) Env(profileDir string, extra ...string) []string {
 
 func (c Copilot) Version() (string, error) {
 	out, err := probeOutput(c, "--version")
+
 	if err != nil {
 		return "", fmt.Errorf("run %s --version: %w", c.Path, err)
 	}
@@ -61,6 +62,7 @@ func (c Copilot) Version() (string, error) {
 
 func (c Copilot) Features() (Features, error) {
 	out, err := probeOutput(c, "--help")
+
 	if err != nil {
 		return Features{}, fmt.Errorf("run %s --help: %w", c.Path, err)
 	}
@@ -91,6 +93,7 @@ type copilotConfig struct {
 func (c Copilot) Identity(profileDir string) (Identity, error) {
 	id := Identity{ProfileDir: profileDir}
 	data, err := os.ReadFile(filepath.Join(profileDir, "config.json"))
+
 	if errors.Is(err, os.ErrNotExist) {
 		return id, nil
 	}
@@ -106,6 +109,7 @@ func (c Copilot) Identity(profileDir string) (Identity, error) {
 	}
 
 	user := cfg.LastLoggedInUser
+
 	if user.Login == "" {
 		user = cfg.LastLoggedInUserOld
 	}
@@ -152,6 +156,7 @@ func (c Copilot) Login(profileDir string) error {
 // LinkUserConfig symlinks ~/.copilot settings into a profile; config.json is left out because it names the signed-in user.
 func (c Copilot) LinkUserConfig(profileDir string) (string, []string, error) {
 	home, err := os.UserHomeDir()
+
 	if err != nil {
 		return "", nil, err
 	}
@@ -169,6 +174,7 @@ func (c Copilot) UserStatusLine(projectDir, profileDir string) string { return "
 func (c Copilot) RedactArgs(args []string) []string { return slices.Clone(args) }
 
 func (c Copilot) HasSessionFlag(args []string) bool {
+
 	for _, a := range args {
 		name, _, _ := strings.Cut(a, "=")
 
@@ -227,6 +233,7 @@ func (c Copilot) CurrentSession(profileDir, cwd string, since time.Time) (string
 
 func modTime(path string) time.Time {
 	fi, err := os.Stat(path)
+
 	if err != nil {
 		return time.Time{}
 	}
@@ -236,6 +243,7 @@ func modTime(path string) time.Time {
 
 func copilotSessionIn(sessionDir string, cwds []string) bool {
 	data, err := os.ReadFile(filepath.Join(sessionDir, "workspace.yaml"))
+
 	if err != nil {
 		return false
 	}

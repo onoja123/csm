@@ -24,16 +24,6 @@ func displayPath(path string) string {
 	return path
 }
 
-func check(label string, ok bool) {
-	mark := "✓"
-
-	if !ok {
-		mark = "✗"
-	}
-
-	fmt.Printf("%-44s %s\n", label, mark)
-}
-
 func providerName(id string) string {
 	p, err := provider.New(id, "")
 	if err != nil {
@@ -43,21 +33,21 @@ func providerName(id string) string {
 	return p.Name()
 }
 
-func cmdSetup(home string) error {
-	fmt.Println("Code Session Manager setup")
-	fmt.Println()
+func cmdSetup(log *Logger, home string) error {
+	log.Info("Code Session Manager setup")
+	log.Blank()
 	s, err := initState(home)
 	if err != nil {
 		return err
 	}
 
-	fmt.Printf("%-44s %s\n", "OS", runtime.GOOS)
+	log.Row("OS", runtime.GOOS)
 
 	ready := 0
 	var missing, broken []error
 
 	for _, id := range provider.IDs {
-		installed, err := setupProvider(s, id)
+		installed, err := setupProvider(log, s, id)
 
 		switch {
 		case err == nil:
@@ -69,7 +59,7 @@ func cmdSetup(home string) error {
 		}
 	}
 
-	fmt.Println()
+	log.Blank()
 
 	if ready == 0 {
 		if len(broken) > 0 {
@@ -80,35 +70,35 @@ func cmdSetup(home string) error {
 	}
 
 	for _, err := range broken {
-		fmt.Printf("%v\n\n", err)
+		log.Info("%v\n", err)
 	}
 
-	fmt.Printf("State directory: %s\n", displayPath(home))
+	log.Info("State directory: %s", displayPath(home))
 
 	if len(s.Accounts) == 0 {
-		fmt.Println("\nReady. Add your first account with:\n\n    csm account add personal")
+		log.Info("\nReady. Add your first account with:\n\n    csm account add personal")
 	} else {
-		fmt.Printf("\nReady. %d account(s) configured.\n", len(s.Accounts))
+		log.Info("\nReady. %d account(s) configured.", len(s.Accounts))
 	}
 
 	return nil
 }
 
-func setupProvider(s *State, id string) (installed bool, err error) {
+func setupProvider(log *Logger, s *State, id string) (installed bool, err error) {
 	p, err := provider.Find(id)
 	if err != nil {
-		fmt.Printf("%-44s %s\n", "Provider: "+providerName(id), "not installed")
+		log.Row("Provider: "+providerName(id), "not installed")
 
 		return false, err
 	}
 
-	check("Provider: "+p.Name(), true)
+	log.Check("Provider: "+p.Name(), true)
 	v, err := p.Version()
 	if err != nil {
 		return true, err
 	}
 
-	fmt.Printf("%-44s %s\n", "  Version", v)
+	log.Row("  Version", v)
 	features, err := p.Features()
 	if err != nil {
 		return true, err
@@ -120,8 +110,8 @@ func setupProvider(s *State, id string) (installed bool, err error) {
 		isolationErr = probeIsolation(s, p)
 	}
 
-	check("  Profile isolation", isolationErr == nil)
-	check("  Session resume", features.CanContinue())
+	log.Check("  Profile isolation", isolationErr == nil)
+	log.Check("  Session resume", features.CanContinue())
 
 	if isolationErr != nil {
 		return true, fmt.Errorf("%s detected, but this installed version does not provide\nthe required profile isolation: %v\n\nUpgrade %s or run: csm doctor", p.Name(), isolationErr, p.Name())
@@ -130,13 +120,13 @@ func setupProvider(s *State, id string) (installed bool, err error) {
 	return true, nil
 }
 
-func cmdDoctor(home string) error {
-	fmt.Println("csm doctor")
-	fmt.Println()
+func cmdDoctor(log *Logger, home string) error {
+	log.Info("csm doctor")
+	log.Blank()
 	var problems []string
 
 	fail := func(label, reason string) {
-		check(label, false)
+		log.Check(label, false)
 		problems = append(problems, label+": "+reason)
 	}
 
@@ -152,7 +142,7 @@ func cmdDoctor(home string) error {
 			fail("csm state directory", fmt.Sprintf("%s is readable by other users; run: chmod 700 %s", home, home))
 
 		} else {
-			check("csm state directory", true)
+			log.Check("csm state directory", true)
 		}
 	}
 
@@ -173,7 +163,7 @@ func cmdDoctor(home string) error {
 			if s != nil && len(s.accountNames(id)) > 0 {
 				fail(label, err.Error())
 			} else {
-				fmt.Printf("%-44s %s\n", label, "not installed")
+				log.Row(label, "not installed")
 			}
 
 			continue
@@ -181,7 +171,7 @@ func cmdDoctor(home string) error {
 
 		installed++
 
-		if doctorProvider(s, p, fail) {
+		if doctorProvider(log, s, p, fail) {
 			usable[id] = p
 		}
 	}
@@ -189,7 +179,7 @@ func cmdDoctor(home string) error {
 	if installed == 0 {
 		fail("Coding agent", firstMissing.Error())
 
-		return reportDoctor(problems)
+		return reportDoctor(log, problems)
 	}
 
 	if s != nil {
@@ -200,7 +190,7 @@ func cmdDoctor(home string) error {
 			label := "Account " + a.Name
 
 			if !a.Enabled {
-				fmt.Printf("%-44s disabled\n", label)
+				log.Info("%-44s disabled", label)
 				continue
 			}
 
@@ -224,12 +214,12 @@ func cmdDoctor(home string) error {
 			}
 
 			seen[identity] = a.Name
-			check(label+" ("+st.Email+")", true)
+			log.Check(label+" ("+st.Email+")", true)
 		}
 	}
 
 	if isTerminal(os.Stdin.Fd()) {
-		check("Interactive terminal", true)
+		log.Check("Interactive terminal", true)
 	} else {
 		fail("Interactive terminal", "stdin is not a terminal; the agent needs one")
 	}
@@ -237,15 +227,14 @@ func cmdDoctor(home string) error {
 	if _, err := exec.LookPath("git"); err != nil {
 		fail("Git", "git not found; project branch detection is disabled")
 	} else {
-		check("Git", true)
+		log.Check("Git", true)
 	}
 
-	return reportDoctor(problems)
+	return reportDoctor(log, problems)
 }
 
-// doctorProvider reports whether accounts of this provider can be checked.
-func doctorProvider(s *State, p provider.Provider, fail func(label, reason string)) bool {
-	check(p.Name()+" executable", true)
+func doctorProvider(log *Logger, s *State, p provider.Provider, fail func(label, reason string)) bool {
+	log.Check(p.Name()+" executable", true)
 	v, err := p.Version()
 	if err != nil {
 		fail(p.Name()+" version", err.Error())
@@ -253,7 +242,7 @@ func doctorProvider(s *State, p provider.Provider, fail func(label, reason strin
 		return false
 	}
 
-	check(p.Name()+" version ("+v+")", true)
+	log.Check(p.Name()+" version ("+v+")", true)
 	features, err := p.Features()
 	if err != nil {
 		fail(p.Name()+" CLI flags", err.Error())
@@ -264,7 +253,7 @@ func doctorProvider(s *State, p provider.Provider, fail func(label, reason strin
 	if err := p.CheckEnv(); err != nil {
 		fail(p.Name()+" auth environment", err.Error())
 	} else {
-		check(p.Name()+" auth environment", true)
+		log.Check(p.Name()+" auth environment", true)
 	}
 
 	if !features.CanIsolate() {
@@ -277,13 +266,13 @@ func doctorProvider(s *State, p provider.Provider, fail func(label, reason strin
 		if err := probeIsolation(s, p); err != nil {
 			fail(p.Name()+" credential isolation", err.Error())
 		} else {
-			check(p.Name()+" profile isolation", true)
-			check(p.Name()+" credential isolation", true)
+			log.Check(p.Name()+" profile isolation", true)
+			log.Check(p.Name()+" credential isolation", true)
 		}
 	}
 
 	if features.CanContinue() {
-		check(p.Name()+" session continuation", true)
+		log.Check(p.Name()+" session continuation", true)
 	} else {
 		fail(p.Name()+" session continuation", p.Name()+" cannot resume sessions by ID; switches will start new sessions")
 	}
@@ -291,25 +280,25 @@ func doctorProvider(s *State, p provider.Provider, fail func(label, reason strin
 	return true
 }
 
-func reportDoctor(problems []string) error {
-	fmt.Println()
+func reportDoctor(log *Logger, problems []string) error {
+	log.Blank()
 
 	if len(problems) == 0 {
-		fmt.Println("Result: ready")
+		log.Info("Result: ready")
 
 		return nil
 	}
 
 	for _, p := range problems {
-		fmt.Printf("%s\n\n", p)
+		log.Info("%s\n", p)
 	}
 
-	fmt.Println("No credentials were modified.")
+	log.Info("No credentials were modified.")
 
 	return errors.New("Result: not ready")
 }
 
-func cmdStatus(home string) error {
+func cmdStatus(log *Logger, home string) error {
 	s, err := loadState(home)
 	if err != nil {
 		return err
@@ -323,61 +312,61 @@ func cmdStatus(home string) error {
 	proj := detectProject(cwd)
 	now := time.Now()
 
-	fmt.Println("Code Session Manager")
-	fmt.Println()
-	fmt.Println("Project")
-	fmt.Printf("  Directory: %s\n", displayPath(proj.Dir))
+	log.Info("Code Session Manager")
+	log.Blank()
+	log.Info("Project")
+	log.Info("  Directory: %s", displayPath(proj.Dir))
 
 	if proj.Branch != "" {
-		fmt.Printf("  Branch:    %s\n", proj.Branch)
+		log.Info("  Branch:    %s", proj.Branch)
 	}
 
-	fmt.Println()
+	log.Blank()
 
 	if len(s.Accounts) == 0 {
-		fmt.Println("Accounts")
-		fmt.Println()
-		fmt.Println("  none")
-		fmt.Println()
+		log.Info("Accounts")
+		log.Blank()
+		log.Info("  none")
+		log.Blank()
 	}
 
 	for _, id := range s.providersInUse() {
-		fmt.Printf("Accounts (%s)\n\n", providerName(id))
-		printAccounts(s, id, now)
-		fmt.Println()
+		log.Info("Accounts (%s)\n", providerName(id))
+		printAccounts(log, s, id, now)
+		log.Blank()
 	}
 
-	fmt.Println("Auto failover")
-	fmt.Printf("  %s\n\n", onOff(s.Config.AutoFailover, "enabled", "disabled"))
+	log.Info("Auto failover")
+	log.Info("  %s\n", onOff(s.Config.AutoFailover, "enabled", "disabled"))
 
-	fmt.Println("Current session")
+	log.Info("Current session")
 	running := false
 
 	for _, id := range provider.IDs {
 		if sess, live := s.loadLiveSession(id, proj.Dir); live {
 			running = true
-			fmt.Printf("  %s: running as %s for %s\n", providerName(id), sess.Account, now.Sub(sess.StartedAt).Round(time.Second))
+			log.Info("  %s: running as %s for %s", providerName(id), sess.Account, now.Sub(sess.StartedAt).Round(time.Second))
 		}
 	}
 
 	if !running {
-		fmt.Println("  not running")
+		log.Info("  not running")
 	}
 
-	fmt.Println()
+	log.Blank()
 
-	fmt.Println("Checkpoint")
+	log.Info("Checkpoint")
 	saved := false
 
 	for _, id := range provider.IDs {
 		if cp, err := s.loadCheckpoint(id, proj.Dir); err == nil {
 			saved = true
-			fmt.Printf("  %s: saved %s ago (%s, %s)\n", providerName(id), now.Sub(cp.CheckpointedAt).Round(time.Second), cp.Account, cp.Reason)
+			log.Info("  %s: saved %s ago (%s, %s)", providerName(id), now.Sub(cp.CheckpointedAt).Round(time.Second), cp.Account, cp.Reason)
 		}
 	}
 
 	if !saved {
-		fmt.Println("  none")
+		log.Info("  none")
 	}
 
 	for _, id := range provider.IDs {
@@ -386,15 +375,15 @@ func cmdStatus(home string) error {
 			continue
 		}
 
-		fmt.Println()
-		fmt.Printf("Previous %s switch did not complete.\n", providerName(id))
-		fmt.Printf("\n  Saved state: %s → %s\n", t.From, t.To)
+		log.Blank()
+		log.Info("Previous %s switch did not complete.", providerName(id))
+		log.Info("\n  Saved state: %s → %s", t.From, t.To)
 
 		if a, err := s.resolveAccount(t.To); err == nil {
-			fmt.Printf("  %s profile: %s\n", a.Name, a.status(now))
+			log.Info("  %s profile: %s", a.Name, a.status(now))
 		}
 
-		fmt.Printf("  Project:     %s\n\nResume the handoff with:\n\n    csm %s\n", displayPath(t.ProjectDir), id)
+		log.Info("  Project:     %s\n\nResume the handoff with:\n\n    csm %s", displayPath(t.ProjectDir), id)
 	}
 
 	return nil
@@ -408,7 +397,7 @@ func onOff(b bool, on, off string) string {
 	return off
 }
 
-func printAccounts(s *State, providerID string, now time.Time) {
+func printAccounts(log *Logger, s *State, providerID string, now time.Time) {
 	for _, name := range s.accountNames(providerID) {
 		a, err := s.resolveAccount(name)
 		if err != nil {
@@ -432,11 +421,10 @@ func printAccounts(s *State, providerID string, now time.Time) {
 			}
 		}
 
-		fmt.Printf("  %s %-12s %s%s\n", marker, name, active, detail)
+		log.Info("  %s %-12s %s%s", marker, name, active, detail)
 	}
 }
 
-// providerArg reads an optional provider name; with none it is the only provider in use, or Claude Code.
 func providerArg(s *State, args []string, usage string) (string, error) {
 	switch len(args) {
 	case 0:
@@ -457,7 +445,7 @@ func providerArg(s *State, args []string, usage string) (string, error) {
 	return "", errors.New(usage)
 }
 
-func cmdCurrent(home string, args []string) error {
+func cmdCurrent(log *Logger, home string, args []string) error {
 	s, err := loadState(home)
 	if err != nil {
 		return err
@@ -472,39 +460,39 @@ func cmdCurrent(home string, args []string) error {
 		return fmt.Errorf("no active %s account; run: csm account add <name> --provider %s", providerName(providerID), providerID)
 	}
 
-	fmt.Println(s.active(providerID))
+	log.Info("%s", s.active(providerID))
 
 	return nil
 }
 
-func cmdAccounts(home string) error {
+func cmdAccounts(log *Logger, home string) error {
 	s, err := loadState(home)
 	if err != nil {
 		return err
 	}
 
 	if len(s.Accounts) == 0 {
-		fmt.Println("No accounts yet. Add one with:\n\n    csm account add personal")
+		log.Info("No accounts yet. Add one with:\n\n    csm account add personal")
 
 		return nil
 	}
 
 	for i, id := range s.providersInUse() {
 		if i > 0 {
-			fmt.Println()
+			log.Blank()
 		}
 
-		fmt.Printf("Accounts (%s)\n", providerName(id))
-		fmt.Println("────────────────────────────────")
-		fmt.Println()
-		printAccounts(s, id, time.Now())
-		fmt.Printf("\nOrder:\n%s\n", strings.Join(s.accountNames(id), " → "))
+		log.Info("Accounts (%s)", providerName(id))
+		log.Info("────────────────────────────────")
+		log.Blank()
+		printAccounts(log, s, id, time.Now())
+		log.Info("\nOrder:\n%s", strings.Join(s.accountNames(id), " → "))
 	}
 
 	return nil
 }
 
-func cmdAccount(home string, args []string) error {
+func cmdAccount(log *Logger, home string, args []string) error {
 	if len(args) < 2 {
 		return errors.New("usage: csm account add|login|remove|enable|disable <name>")
 	}
@@ -534,7 +522,7 @@ func cmdAccount(home string, args []string) error {
 			}
 		}
 
-		return accountAdd(s, providerID, name, linkSettings)
+		return accountAdd(log, s, providerID, name, linkSettings)
 
 	case "login":
 		a, err := s.resolveAccount(name)
@@ -547,7 +535,7 @@ func cmdAccount(home string, args []string) error {
 			return err
 		}
 
-		return accountLogin(s, p, a)
+		return accountLogin(log, s, p, a)
 
 	case "remove":
 		for _, sess := range s.liveSessions() {
@@ -576,7 +564,7 @@ func cmdAccount(home string, args []string) error {
 			return err
 		}
 
-		fmt.Printf("✓ Removed %s\n\nIts profile directory was kept:\n    %s\n\nTo sign it out and delete it:\n\n    %s\n    rm -rf %s\n", name, displayPath(dir), p.LogoutCommand(dir), dir)
+		log.Success("Removed %s\n\nIts profile directory was kept:\n    %s\n\nTo sign it out and delete it:\n\n    %s\n    rm -rf %s", name, displayPath(dir), p.LogoutCommand(dir), dir)
 
 		return nil
 
@@ -592,7 +580,7 @@ func cmdAccount(home string, args []string) error {
 			return err
 		}
 
-		fmt.Printf("✓ %s %sd\n", name, sub)
+		log.Success("%s %sd", name, sub)
 
 		return nil
 
@@ -601,7 +589,7 @@ func cmdAccount(home string, args []string) error {
 	}
 }
 
-func accountAdd(s *State, providerID, name string, linkSettings bool) error {
+func accountAdd(log *Logger, s *State, providerID, name string, linkSettings bool) error {
 	p, err := provider.Find(providerID)
 	if err != nil {
 		return err
@@ -629,7 +617,6 @@ func accountAdd(s *State, providerID, name string, linkSettings bool) error {
 		return fmt.Errorf("create profile directory: %w", err)
 	}
 
-	// Linked first: the isolation check must see the settings the profile will really run with.
 	if linkSettings {
 		userDir, linked, err := p.LinkUserConfig(a.ConfigDir)
 		if err != nil {
@@ -639,7 +626,7 @@ func accountAdd(s *State, providerID, name string, linkSettings bool) error {
 		}
 
 		if len(linked) > 0 {
-			fmt.Printf("Sharing from %s: %s\n", displayPath(userDir), strings.Join(linked, ", "))
+			log.Info("Sharing from %s: %s", displayPath(userDir), strings.Join(linked, ", "))
 		}
 	}
 
@@ -653,13 +640,13 @@ func accountAdd(s *State, providerID, name string, linkSettings bool) error {
 		return err
 	}
 
-	fmt.Printf("Created profile %s at %s\n", name, displayPath(a.ConfigDir))
+	log.Info("Created profile %s at %s", name, displayPath(a.ConfigDir))
 
-	return accountLogin(s, p, a)
+	return accountLogin(log, s, p, a)
 }
 
-func accountLogin(s *State, p provider.Provider, a *Account) error {
-	fmt.Printf("\nAuthenticate %s normally in the browser window %s opens.\n\n", a.Name, p.Name())
+func accountLogin(log *Logger, s *State, p provider.Provider, a *Account) error {
+	log.Info("\nAuthenticate %s normally in the browser window %s opens.\n", a.Name, p.Name())
 
 	if err := p.Login(a.ConfigDir); err != nil {
 		return fmt.Errorf("%s login for %s did not complete: %w\n\nTry again with:\n\n    csm account login %s", p.Name(), a.Name, err, a.Name)
@@ -684,12 +671,11 @@ func accountLogin(s *State, p provider.Provider, a *Account) error {
 		return err
 	}
 
-	fmt.Printf("\n✓ %s ready (%s)\n", a.Name, st.Email)
+	log.Info("\n✓ %s ready (%s)", a.Name, st.Email)
 
 	return nil
 }
 
-// Falls back to the only running session anywhere so `csm next` works outside the project; an empty providerID means any.
 func findManagedSession(s *State, providerID string) (Session, bool, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -727,7 +713,7 @@ func findManagedSession(s *State, providerID string) (Session, bool, error) {
 	}
 }
 
-func requestSwitch(s *State, sess Session, to string) error {
+func requestSwitch(log *Logger, s *State, sess Session, to string) error {
 	path := filepath.Join(s.projectStateDir(sess.Provider, sess.ProjectDir), requestFile)
 
 	if err := writeJSON(path, SwitchRequest{To: to, RequestedAt: time.Now()}); err != nil {
@@ -740,12 +726,12 @@ func requestSwitch(s *State, sess Session, to string) error {
 		return fmt.Errorf("signal the running csm session: %w", err)
 	}
 
-	fmt.Printf("Switching:\n\n%s → %s\n\n✓ switch requested\n\nThe csm session in %s is checkpointing, stopping\nthe agent and restarting it as %s.\n", sess.Account, to, displayPath(sess.ProjectDir), to)
+	log.Info("Switching:\n\n%s → %s\n\n✓ switch requested\n\nThe csm session in %s is checkpointing, stopping\nthe agent and restarting it as %s.", sess.Account, to, displayPath(sess.ProjectDir), to)
 
 	return nil
 }
 
-func selectAccount(s *State, target *Account) error {
+func selectAccount(log *Logger, s *State, target *Account) error {
 	p, err := provider.Find(target.providerID())
 	if err != nil {
 		return err
@@ -762,12 +748,12 @@ func selectAccount(s *State, target *Account) error {
 
 	if live {
 		if sess.Account == target.Name {
-			fmt.Printf("The running session is already using %s.\n", target.Name)
+			log.Info("The running session is already using %s.", target.Name)
 
 			return nil
 		}
 
-		return requestSwitch(s, sess, target.Name)
+		return requestSwitch(log, s, sess, target.Name)
 	}
 
 	s.setActive(p.ID(), target.Name)
@@ -776,12 +762,12 @@ func selectAccount(s *State, target *Account) error {
 		return err
 	}
 
-	fmt.Printf("✓ Active %s account changed to %s\n", p.Name(), target.Name)
+	log.Success("Active %s account changed to %s", p.Name(), target.Name)
 
 	return nil
 }
 
-func cmdUse(home, nameOrIndex string) error {
+func cmdUse(log *Logger, home, nameOrIndex string) error {
 	s, err := loadState(home)
 	if err != nil {
 		return err
@@ -799,10 +785,10 @@ func cmdUse(home, nameOrIndex string) error {
 		return fmt.Errorf("cannot switch to %q.\n\nThe %s profile is not authenticated.\n\nRun:\n\n    csm account login %s", target.Name, target.Name, target.Name)
 	}
 
-	return selectAccount(s, target)
+	return selectAccount(log, s, target)
 }
 
-func cmdNext(home string, args []string) error {
+func cmdNext(log *Logger, home string, args []string) error {
 	s, err := loadState(home)
 	if err != nil {
 		return err
@@ -813,7 +799,6 @@ func cmdNext(home string, args []string) error {
 		return err
 	}
 
-	// With no provider named, a running session decides which provider is meant.
 	wanted := ""
 
 	if len(args) > 0 {
@@ -836,10 +821,10 @@ func cmdNext(home string, args []string) error {
 		return fmt.Errorf("no other %s account is ready (%w).\n\nRun: csm accounts", providerName(providerID), err)
 	}
 
-	return selectAccount(s, target)
+	return selectAccount(log, s, target)
 }
 
-func cmdAuto(home string, args []string) error {
+func cmdAuto(log *Logger, home string, args []string) error {
 	s, err := loadState(home)
 	if err != nil {
 		return err
@@ -863,16 +848,16 @@ func cmdAuto(home string, args []string) error {
 		return errors.New("usage: csm auto on|off|status")
 	}
 
-	fmt.Printf("Automatic failover: %s\n", onOff(s.Config.AutoFailover, "ON", "OFF"))
+	log.Info("Automatic failover: %s", onOff(s.Config.AutoFailover, "ON", "OFF"))
 
 	for _, id := range s.providersInUse() {
-		fmt.Printf("Order (%s): %s\n", providerName(id), strings.Join(s.accountNames(id), " → "))
+		log.Info("Order (%s): %s", providerName(id), strings.Join(s.accountNames(id), " → "))
 	}
 
 	return nil
 }
 
-func cmdRun(home, providerID string, args []string) (int, error) {
+func cmdRun(log *Logger, home, providerID string, args []string) (int, error) {
 	s, err := loadState(home)
 	if err != nil {
 		return 1, err
@@ -918,7 +903,7 @@ func cmdRun(home, providerID string, args []string) (int, error) {
 		pollInterval: p.LimitPollInterval(),
 		cwd:          cwd,
 		project:      detectProject(cwd),
-		out:          os.Stdout,
+		log:          log,
 		in:           bufio.NewReader(os.Stdin),
 		interactive:  isTerminal(os.Stdin.Fd()),
 		unavailable:  map[string]bool{},

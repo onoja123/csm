@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"maps"
 	"os"
 	"path/filepath"
@@ -46,7 +45,7 @@ func (s *State) loadUsage(account string) (UsageRecord, bool) {
 	return r, true
 }
 
-func cmdUsage(home string, args []string) error {
+func cmdUsage(log *Logger, home string, args []string) error {
 	s, err := loadState(home)
 	if err != nil {
 		return err
@@ -97,14 +96,14 @@ func cmdUsage(home string, args []string) error {
 				continue
 			}
 
-			fmt.Printf("Checking %d account(s) with %s...\n", len(group), p.Name())
+			log.Info("Checking %d account(s) with %s...", len(group), p.Name())
 			maps.Copy(errs, refreshUsage(s, p, group, time.Now()))
 		}
 
-		fmt.Println()
+		log.Blank()
 	}
 
-	printUsage(os.Stdout, s, names, errs, time.Now())
+	printUsage(log, s, names, errs, time.Now())
 
 	return nil
 }
@@ -190,7 +189,7 @@ func refreshUsage(s *State, p provider.Provider, names []string, now time.Time) 
 	return byName
 }
 
-func printUsage(w io.Writer, s *State, names []string, errs map[string]error, now time.Time) {
+func printUsage(log *Logger, s *State, names []string, errs map[string]error, now time.Time) {
 	var notes []string
 
 	printed := false
@@ -202,12 +201,12 @@ func printUsage(w io.Writer, s *State, names []string, errs map[string]error, no
 		}
 
 		if printed {
-			fmt.Fprintln(w)
+			log.Blank()
 		}
 
 		printed = true
-		fmt.Fprintf(w, "Usage (%s)\n", providerName(id))
-		printProviderUsage(w, s, id, group, errs, now)
+		log.Info("Usage (%s)", providerName(id))
+		printProviderUsage(log, s, id, group, errs, now)
 
 		if p, err := provider.New(id, ""); err == nil && p.UsageCheckNote() != "" {
 			notes = append(notes, p.UsageCheckNote())
@@ -215,19 +214,19 @@ func printUsage(w io.Writer, s *State, names []string, errs map[string]error, no
 	}
 
 	if errs == nil {
-		fmt.Fprintln(w, "\nLast saved figures only. Run `csm usage` without --cached for a live check.")
+		log.Info("\nLast saved figures only. Run `csm usage` without --cached for a live check.")
 
 		return
 	}
 
-	fmt.Fprintln(w)
+	log.Blank()
 
 	for _, note := range notes {
-		fmt.Fprintln(w, note)
+		log.Info("%s", note)
 	}
 }
 
-func printProviderUsage(w io.Writer, s *State, providerID string, names []string, errs map[string]error, now time.Time) {
+func printProviderUsage(log *Logger, s *State, providerID string, names []string, errs map[string]error, now time.Time) {
 	for _, name := range names {
 		marker := "○"
 
@@ -235,38 +234,38 @@ func printProviderUsage(w io.Writer, s *State, providerID string, names []string
 			marker = "●"
 		}
 
-		fmt.Fprintln(w)
+		log.Blank()
 		rec, ok := s.loadUsage(name)
 		fetchErr := errs[name]
 
 		switch {
 		case (!ok || rec.Usage.Empty()) && fetchErr != nil:
-			fmt.Fprintf(w, "%s %-12s could not check usage\n", marker, name)
-			fmt.Fprintf(w, "    %s\n", indent(fetchErr.Error()))
+			log.Info("%s %-12s could not check usage", marker, name)
+			log.Info("    %s", indent(fetchErr.Error()))
 			continue
 
 		case !ok || rec.Usage.Empty():
-			fmt.Fprintf(w, "%s %-12s no usage seen yet\n", marker, name)
-			fmt.Fprintf(w, "    Check it live with: csm usage %s\n", name)
+			log.Info("%s %-12s no usage seen yet", marker, name)
+			log.Info("    Check it live with: csm usage %s", name)
 			continue
 		}
 
-		fmt.Fprintf(w, "%s %-12s updated %s ago\n", marker, name, now.Sub(rec.UpdatedAt).Round(time.Second))
+		log.Info("%s %-12s updated %s ago", marker, name, now.Sub(rec.UpdatedAt).Round(time.Second))
 
 		if rec.Usage.Limited {
-			fmt.Fprintln(w, "    limit reached: requests are currently being rejected")
+			log.Info("    limit reached: requests are currently being rejected")
 		}
 
-		printWindow(w, "5-hour", rec.Usage.FiveHour, now)
-		printWindow(w, "7-day", rec.Usage.SevenDay, now)
-		printWindow(w, "spend", rec.Usage.SpendLimit, now)
+		printWindow(log, "5-hour", rec.Usage.FiveHour, now)
+		printWindow(log, "7-day", rec.Usage.SevenDay, now)
+		printWindow(log, "spend", rec.Usage.SpendLimit, now)
 
 		if fetchErr != nil {
-			fmt.Fprintf(w, "    showing last saved figures; live check failed: %s\n", indent(fetchErr.Error()))
+			log.Info("    showing last saved figures; live check failed: %s", indent(fetchErr.Error()))
 		}
 
 		if a, err := s.resolveAccount(name); err == nil && a.status(now) == statusCooldown {
-			fmt.Fprintf(w, "    csm cooldown until %s\n", formatReset(a.CooldownUntil, now))
+			log.Info("    csm cooldown until %s", formatReset(a.CooldownUntil, now))
 		}
 	}
 }
@@ -275,18 +274,18 @@ func indent(text string) string {
 	return strings.ReplaceAll(strings.TrimSpace(text), "\n", "\n    ")
 }
 
-func printWindow(w io.Writer, label string, win provider.UsageWindow, now time.Time) {
+func printWindow(log *Logger, label string, win provider.UsageWindow, now time.Time) {
 	if win.ResetsAt.IsZero() {
 		return
 	}
 
 	if !win.ResetsAt.After(now) {
-		fmt.Fprintf(w, "    %-8s window reset at %s (was %.0f%%)\n", label, formatReset(win.ResetsAt, now), win.UsedPercent)
+		log.Info("    %-8s window reset at %s (was %.0f%%)", label, formatReset(win.ResetsAt, now), win.UsedPercent)
 
 		return
 	}
 
-	fmt.Fprintf(w, "    %-8s %3.0f%%   resets %s\n", label, win.UsedPercent, formatReset(win.ResetsAt, now))
+	log.Info("    %-8s %3.0f%%   resets %s", label, win.UsedPercent, formatReset(win.ResetsAt, now))
 }
 
 func formatReset(t, now time.Time) string {

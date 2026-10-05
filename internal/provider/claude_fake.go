@@ -14,7 +14,6 @@ import (
 	"time"
 )
 
-// CSM_FAKE_LIMIT profiles report a usage limit; CSM_FAKE_HOLD profiles run until stopped.
 func RunFakeClaude(args []string) int {
 	configDir := os.Getenv("CLAUDE_CONFIG_DIR")
 	authFile := filepath.Join(configDir, "fake-auth")
@@ -85,6 +84,7 @@ func RunFakeClaude(args []string) int {
 
 	os.MkdirAll(filepath.Dir(transcript), 0o700)
 	f, err := os.OpenFile(transcript, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+
 	if err != nil {
 		return 1
 	}
@@ -145,7 +145,6 @@ func runFakeHooks(settings Settings, event string, payload map[string]string) {
 	}
 }
 
-// The fake reports 100% of the 5-hour window for profiles in CSM_FAKE_LIMIT and 42% otherwise.
 func runFakeStatusLine(settings Settings, profile string) {
 	if settings.StatusLine.Command == "" {
 		return
@@ -166,8 +165,8 @@ func runFakeStatusLine(settings Settings, profile string) {
 	cmd.Run()
 }
 
-// fakePrint emits the stream-json rate_limit_event a real `claude -p` produces; logged-out profiles fail.
 func fakePrint(profile string) int {
+
 	if _, err := os.Stat(filepath.Join(os.Getenv("CLAUDE_CONFIG_DIR"), "fake-auth")); err != nil {
 		fmt.Println(`{"type":"result","subtype":"success","is_error":true,"result":"Not logged in · Please run /login"}`)
 

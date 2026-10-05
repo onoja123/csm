@@ -15,7 +15,6 @@ import (
 	"time"
 )
 
-// These override per-profile login, which would make every profile the same account.
 var claudeAuthOverrideEnv = []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"}
 
 type Claude struct {
@@ -58,6 +57,7 @@ func (c Claude) Version() (string, error) {
 
 func (c Claude) Features() (Features, error) {
 	out, err := exec.Command(c.Path, "--help").Output()
+
 	if err != nil {
 		return Features{}, fmt.Errorf("run %s --help: %w", c.Path, err)
 	}
@@ -74,7 +74,6 @@ func (c Claude) Features() (Features, error) {
 	}, nil
 }
 
-// claudeAuthStatus is the subset of `claude auth status --json` csm reads; it never contains tokens.
 type claudeAuthStatus struct {
 	LoggedIn        bool   `json:"loggedIn"`
 	AuthMethod      string `json:"authMethod"`
@@ -88,7 +87,6 @@ func (c Claude) Identity(profileDir string) (Identity, error) {
 	out, err := cmd.Output()
 	var st claudeAuthStatus
 
-	// A logged-out profile exits non-zero but still prints valid JSON.
 	if jsonErr := json.Unmarshal(out, &st); jsonErr != nil {
 		if err != nil {
 			return Identity{}, fmt.Errorf("claude auth status failed: %w", err)
@@ -126,13 +124,11 @@ type StatusLine struct {
 	Command string `json:"command"`
 }
 
-// Settings is the subset of Claude Code's settings.json that csm writes or reads.
 type Settings struct {
 	Hooks      map[string][]HookGroup `json:"hooks,omitempty"`
 	StatusLine StatusLine             `json:"statusLine,omitzero"`
 }
 
-// LaunchArgs registers csm's hooks and status line for one launch without touching settings files.
 func (c Claude) LaunchArgs(csmPath string) []string {
 	quoted := "'" + strings.ReplaceAll(csmPath, "'", `'\''`) + "'"
 	s := Settings{
@@ -147,7 +143,6 @@ func (c Claude) LaunchArgs(csmPath string) []string {
 	return []string{"--settings", string(data)}
 }
 
-// UserStatusLine finds the status line the user configured, which csm's --settings would otherwise hide.
 func (c Claude) UserStatusLine(projectDir, profileDir string) string {
 	paths := []string{
 		filepath.Join(projectDir, ".claude", "settings.local.json"),
@@ -157,6 +152,7 @@ func (c Claude) UserStatusLine(projectDir, profileDir string) string {
 
 	for _, path := range paths {
 		data, err := os.ReadFile(path)
+
 		if err != nil {
 			continue
 		}
@@ -175,8 +171,6 @@ type claudeRateWindow struct {
 	UsedPercentage float64 `json:"used_percentage"`
 	ResetsAt       int64   `json:"resets_at"`
 }
-
-// Status line input, per https://code.claude.com/docs/en/statusline.md#available-data.
 type claudeStatusLineInput struct {
 	RateLimits struct {
 		FiveHour   claudeRateWindow `json:"five_hour"`
@@ -255,7 +249,6 @@ func (c Claude) RedactArgs(args []string) []string {
 	return out
 }
 
-// StopFailure payload, per https://code.claude.com/docs/en/hooks.md#stopfailure.
 type claudeStopFailure struct {
 	SessionID            string `json:"session_id"`
 	Error                string `json:"error"`
@@ -291,7 +284,6 @@ func (c Claude) ParseSessionStart(data []byte) (string, error) {
 	return ev.SessionID, nil
 }
 
-// Only a rate_limit error with usage-limit wording counts; a bare 429 is transient.
 func classifyClaudeFailure(errorType, text string) StopReason {
 	switch errorType {
 	case "rate_limit":
@@ -313,9 +305,9 @@ func classifyClaudeFailure(errorType, text string) StopReason {
 	}
 }
 
-// CarrySession copies a transcript, kept at <profile>/projects/<project>/<id>.jsonl plus an optional <id>/ dir.
 func (c Claude) CarrySession(fromProfile, toProfile, sessionID string) ([]string, string, error) {
 	matches, err := filepath.Glob(filepath.Join(fromProfile, "projects", "*", sessionID+".jsonl"))
+
 	if err != nil || len(matches) == 0 {
 		return nil, "", err
 	}
@@ -338,9 +330,9 @@ func (c Claude) CarrySession(fromProfile, toProfile, sessionID string) ([]string
 	return []string{"--resume", sessionID}, sessionID, nil
 }
 
-// LinkUserConfig symlinks ~/.claude settings into a profile; ~/.claude itself is never modified.
 func (c Claude) LinkUserConfig(profileDir string) (string, []string, error) {
 	home, err := os.UserHomeDir()
+
 	if err != nil {
 		return "", nil, err
 	}
@@ -352,11 +344,13 @@ func (c Claude) LinkUserConfig(profileDir string) (string, []string, error) {
 }
 
 func copyFile(src, dst string) error {
+
 	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
 		return err
 	}
 
 	in, err := os.Open(src)
+
 	if err != nil {
 		return err
 	}
@@ -365,6 +359,7 @@ func copyFile(src, dst string) error {
 
 	tmp := dst + ".csm-tmp"
 	out, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+
 	if err != nil {
 		return err
 	}
@@ -384,6 +379,7 @@ func copyFile(src, dst string) error {
 
 func copyTree(src, dst string) error {
 	return filepath.WalkDir(src, func(path string, d os.DirEntry, err error) error {
+
 		if err != nil {
 			return err
 		}
@@ -403,7 +399,6 @@ func copyTree(src, dst string) error {
 	})
 }
 
-// FetchUsage spends one ~500-token Haiku request to read the rate_limit_event from stream-json output.
 func (c Claude) FetchUsage(ctx context.Context, profileDir string) (Usage, error) {
 	cmd := exec.CommandContext(ctx, c.Path, "-p", "ok",
 		"--model", "haiku",
@@ -420,6 +415,7 @@ func (c Claude) FetchUsage(ctx context.Context, profileDir string) (Usage, error
 	cmd.Dir = os.TempDir()
 	out, runErr := cmd.Output()
 	usage, err := parseUsageStream(strings.NewReader(string(out)))
+
 	if err != nil && runErr != nil {
 		return Usage{}, fmt.Errorf("%w (%v)", err, runErr)
 	}

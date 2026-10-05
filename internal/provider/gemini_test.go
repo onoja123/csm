@@ -29,6 +29,7 @@ func TestGeminiIdentity(t *testing.T) {
 	profile := t.TempDir()
 	g := Gemini{}
 	id, err := g.Identity(profile)
+
 	if err != nil || id.LoggedIn || id.ProfileDir != profile {
 		t.Fatalf("empty profile: %+v %v", id, err)
 	}
@@ -42,6 +43,7 @@ func TestGeminiIdentity(t *testing.T) {
 
 	os.WriteFile(filepath.Join(profile, ".gemini", "oauth_creds.json"), []byte(`{}`), 0o600)
 	id, err = g.Identity(profile)
+
 	if err != nil || !id.LoggedIn || id.Email != "a@example.test" {
 		t.Fatalf("signed in: %+v %v", id, err)
 	}
@@ -80,6 +82,7 @@ func TestGeminiSessions(t *testing.T) {
 	}
 
 	resumeArgs, newSessionID, err := g.CarrySession(from, to, "bbbbbbbb-current")
+
 	if err != nil || !slices.Equal(resumeArgs, []string{"--session-file", want}) || newSessionID != "" {
 		t.Fatalf("resumeArgs=%v newSessionID=%q err=%v", resumeArgs, newSessionID, err)
 	}
@@ -116,6 +119,7 @@ func TestGeminiArgs(t *testing.T) {
 
 	t.Setenv("GEMINI_CLI_HOME", "/somewhere/else")
 	env := g.Env("/profiles/work")
+
 	if !slices.Contains(env, "GEMINI_CLI_HOME=/profiles/work") || slices.Contains(env, "GEMINI_CLI_HOME=/somewhere/else") {
 		t.Fatal("profile directory not applied to the environment")
 	}

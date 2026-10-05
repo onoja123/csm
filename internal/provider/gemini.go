@@ -28,6 +28,7 @@ func FindGemini() (Provider, error) {
 	}
 
 	path, err := exec.LookPath("gemini")
+
 	if err != nil {
 		return nil, errors.New("Gemini CLI is not installed or not on PATH.\n\nInstall it with `npm install -g @google/gemini-cli`, then run: csm doctor")
 	}
@@ -52,6 +53,7 @@ func geminiDir(profileDir string) string { return filepath.Join(profileDir, ".ge
 
 func (g Gemini) Version() (string, error) {
 	out, err := probeOutput(g, "--version")
+
 	if err != nil {
 		return "", fmt.Errorf("run %s --version: %w", g.Path, err)
 	}
@@ -61,6 +63,7 @@ func (g Gemini) Version() (string, error) {
 
 func (g Gemini) Features() (Features, error) {
 	out, err := probeOutput(g, "--help")
+
 	if err != nil {
 		return Features{}, fmt.Errorf("run %s --help: %w", g.Path, err)
 	}
@@ -89,6 +92,7 @@ func (g Gemini) Identity(profileDir string) (Identity, error) {
 	}
 
 	data, err := os.ReadFile(filepath.Join(geminiDir(profileDir), "google_accounts.json"))
+
 	if err == nil {
 		err = json.Unmarshal(data, &accounts)
 	}
@@ -121,6 +125,7 @@ func (g Gemini) Login(profileDir string) error {
 // LinkUserConfig symlinks ~/.gemini settings into a profile; ~/.gemini itself is never modified.
 func (g Gemini) LinkUserConfig(profileDir string) (string, []string, error) {
 	home, err := os.UserHomeDir()
+
 	if err != nil {
 		return "", nil, err
 	}
@@ -176,6 +181,7 @@ type geminiSession struct {
 // geminiSessions reads the first record of each session file, kept at <profile>/.gemini/tmp/<project>/chats/, newest first.
 func geminiSessions(profileDir string) ([]geminiSession, error) {
 	paths, err := filepath.Glob(filepath.Join(geminiDir(profileDir), "tmp", "*", "chats", "session-*.json*"))
+
 	if err != nil {
 		return nil, err
 	}
@@ -184,6 +190,7 @@ func geminiSessions(profileDir string) ([]geminiSession, error) {
 
 	for _, path := range paths {
 		f, err := os.Open(path)
+
 		if err != nil {
 			continue
 		}
@@ -222,6 +229,7 @@ func (g Gemini) CurrentSession(profileDir, cwd string, since time.Time) (string,
 	}
 
 	sessions, err := geminiSessions(profileDir)
+
 	if err != nil {
 		return "", err
 	}
@@ -242,6 +250,7 @@ func (g Gemini) CurrentSession(profileDir, cwd string, since time.Time) (string,
 // CarrySession copies nothing: the target profile imports the session file with --session-file, under a new ID.
 func (g Gemini) CarrySession(fromProfile, toProfile, sessionID string) ([]string, string, error) {
 	sessions, err := geminiSessions(fromProfile)
+
 	if err != nil {
 		return nil, "", err
 	}

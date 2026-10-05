@@ -44,6 +44,7 @@ func TestParseFailureClassification(t *testing.T) {
 
 func TestParseFailureKeepsSessionAndMessage(t *testing.T) {
 	f, err := Claude{}.ParseFailure([]byte(`{"session_id":"s1","error":"rate_limit","last_assistant_message":"limit · resets 5pm","extra":{"x":1}}`))
+
 	if err != nil || f.SessionID != "s1" || f.Message != "limit · resets 5pm" {
 		t.Fatalf("got %+v %v", f, err)
 	}
@@ -86,6 +87,7 @@ func TestCarrySession(t *testing.T) {
 	os.WriteFile(filepath.Join(project, "sid", "subagents", "a.jsonl"), []byte("sub\n"), 0o600)
 
 	resumeArgs, sessionID, err := Claude{}.CarrySession(from, to, "sid")
+
 	if err != nil || !slices.Equal(resumeArgs, []string{"--resume", "sid"}) || sessionID != "sid" {
 		t.Fatalf("resumeArgs=%v sessionID=%q err=%v", resumeArgs, sessionID, err)
 	}
@@ -127,6 +129,7 @@ func TestNewSessionArgsRespectsFeatures(t *testing.T) {
 
 func TestParseUsage(t *testing.T) {
 	u, err := Claude{}.ParseUsage([]byte(`{"model":{"id":"x"},"rate_limits":{"five_hour":{"used_percentage":23.5,"resets_at":1738425600},"seven_day":{"used_percentage":41.2,"resets_at":1738857600}}}`))
+
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,6 +143,7 @@ func TestParseUsage(t *testing.T) {
 	}
 
 	u, err = Claude{}.ParseUsage([]byte(`{"model":{"id":"x"}}`))
+
 	if err != nil || !u.Empty() {
 		t.Fatalf("no rate_limits should be empty: %+v %v", u, err)
 	}
@@ -166,12 +170,12 @@ func TestUserStatusLine(t *testing.T) {
 	}
 }
 
-// Recorded from `claude -p --output-format stream-json --verbose` on Claude Code 2.1.282, ids removed.
 const realRateLimitEvent = `{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1790309400,"rateLimitType":"five_hour","overageStatus":"rejected","overageDisabledReason":"org_level_disabled","isUsingOverage":false,"unifiedWindows":{"five_hour":{"utilization":0,"resetsAt":1790309400},"seven_day":{"utilization":0.13,"resetsAt":1790467200}}}}`
 
 func TestParseUsageStream(t *testing.T) {
 	stream := `{"type":"system","subtype":"init"}` + "\n" + realRateLimitEvent + "\n" + `{"type":"result","subtype":"success","is_error":false,"result":"ok"}` + "\n"
 	u, err := parseUsageStream(strings.NewReader(stream))
+
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,11 +189,13 @@ func TestParseUsageStream(t *testing.T) {
 	}
 
 	u, err = parseUsageStream(strings.NewReader(strings.Replace(realRateLimitEvent, `"status":"allowed"`, `"status":"rejected"`, 1)))
+
 	if err != nil || !u.Limited {
 		t.Fatalf("rejected status not reported: %+v %v", u, err)
 	}
 
 	_, err = parseUsageStream(strings.NewReader(`{"type":"result","is_error":true,"result":"Not logged in · Please run /login"}`))
+
 	if err == nil || !strings.Contains(err.Error(), "Not logged in") {
 		t.Fatalf("got %v", err)
 	}

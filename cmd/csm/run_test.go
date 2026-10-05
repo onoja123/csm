@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,7 +12,6 @@ import (
 	"github.com/onoja123/csm/internal/provider"
 )
 
-// The fake agents re-invoke this test binary as csm.
 func TestMain(m *testing.M) {
 	if len(os.Args) > 1 && (os.Args[1] == "hook" || strings.HasPrefix(os.Args[1], "__fake-")) {
 		os.Exit(run(os.Args[1:]))
@@ -102,7 +102,7 @@ func switchWhenLive(providerID string, requested chan<- error) func(home, projec
 			s, err := loadState(home)
 			if err == nil {
 				if sess, live := s.loadLiveSession(providerID, projectDir); live && sess.Account == "alpha" {
-					requested <- requestSwitch(s, sess, "beta")
+					requested <- requestSwitch(&Logger{out: io.Discard, err: io.Discard}, s, sess, "beta")
 
 					return
 				}
@@ -304,7 +304,7 @@ func TestPrintUsage(t *testing.T) {
 	}})
 	var out strings.Builder
 
-	printUsage(&out, s, []string{"personal", "work"}, nil, testNow)
+	printUsage(&Logger{out: &out, err: &out}, s, []string{"personal", "work"}, nil, testNow)
 	got := out.String()
 
 	for _, want := range []string{"● personal     updated 2m0s ago", "5-hour    23%   resets", "7-day    window reset at", "(was 41%)", "○ work         no usage seen yet", "csm usage work", "--cached"} {
@@ -360,7 +360,7 @@ func TestRefreshUsageLive(t *testing.T) {
 
 	var out strings.Builder
 
-	printUsage(&out, s, []string{"personal", "work", "stranger"}, errs, now)
+	printUsage(&Logger{out: &out, err: &out}, s, []string{"personal", "work", "stranger"}, errs, now)
 
 	for _, want := range []string{"5-hour    42%", "limit reached", "could not check usage", "csm account login stranger"} {
 		if !strings.Contains(out.String(), want) {

@@ -21,7 +21,6 @@ const (
 	codexCallID       = 2
 )
 
-// These override per-profile login, which would make every profile the same account.
 var codexAuthOverrideEnv = []string{"CODEX_ACCESS_TOKEN", "CODEX_API_KEY"}
 
 type Codex struct {
@@ -55,6 +54,7 @@ func (c Codex) Env(profileDir string, extra ...string) []string {
 
 func (c Codex) Version() (string, error) {
 	out, err := probeOutput(c, "--version")
+
 	if err != nil {
 		return "", fmt.Errorf("run %s --version: %w", c.Path, err)
 	}
@@ -64,6 +64,7 @@ func (c Codex) Version() (string, error) {
 
 func (c Codex) Features() (Features, error) {
 	out, err := probeOutput(c, "--help")
+
 	if err != nil {
 		return Features{}, fmt.Errorf("run %s --help: %w", c.Path, err)
 	}
@@ -124,11 +125,13 @@ func (c Codex) rpc(ctx context.Context, profileDir, method string, params, resul
 	cmd.Env = c.Env(profileDir)
 	cmd.Dir = os.TempDir()
 	stdin, err := cmd.StdinPipe()
+
 	if err != nil {
 		return "", err
 	}
 
 	stdout, err := cmd.StdoutPipe()
+
 	if err != nil {
 		return "", err
 	}
@@ -146,8 +149,9 @@ func (c Codex) rpc(ctx context.Context, profileDir, method string, params, resul
 	enc := json.NewEncoder(stdin)
 	sc := bufio.NewScanner(stdout)
 	sc.Buffer(make([]byte, 64*1024), 16*1024*1024)
-	// Notifications and the server's own requests are skipped; only the reply to the given request counts.
+
 	reply := func(id int) (codexResponse, error) {
+
 		for sc.Scan() {
 			var msg codexResponse
 
@@ -170,6 +174,7 @@ func (c Codex) rpc(ctx context.Context, profileDir, method string, params, resul
 	}
 
 	msg, err := reply(codexInitializeID)
+
 	if err != nil {
 		return "", err
 	}
@@ -193,6 +198,7 @@ func (c Codex) rpc(ctx context.Context, profileDir, method string, params, resul
 	}
 
 	msg, err = reply(codexCallID)
+
 	if err != nil {
 		return "", err
 	}
@@ -219,8 +225,6 @@ func (c Codex) call(profileDir, method string, params, result any) (string, erro
 type codexAccountReadParams struct {
 	RefreshToken bool `json:"refreshToken"`
 }
-
-// codexAccount is the subset of `account/read` csm reads; it never contains tokens.
 type codexAccount struct {
 	Account *codexAccountInfo `json:"account"`
 }
@@ -234,6 +238,7 @@ func (c Codex) Identity(profileDir string) (Identity, error) {
 	var res codexAccount
 
 	home, err := c.call(profileDir, "account/read", codexAccountReadParams{RefreshToken: false}, &res)
+
 	if err != nil {
 		return Identity{}, err
 	}
@@ -265,7 +270,6 @@ func (c Codex) Login(profileDir string) error {
 	return cmd.Run()
 }
 
-// LinkUserConfig symlinks ~/.codex settings into a profile; ~/.codex itself is never modified.
 func (c Codex) LinkUserConfig(profileDir string) (string, []string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -356,16 +360,19 @@ func (c Codex) CarrySession(fromProfile, toProfile, sessionID string) ([]string,
 	}
 
 	root, err := filepath.EvalSymlinks(fromProfile)
+
 	if err != nil {
 		return nil, "", err
 	}
 
 	src, err := filepath.EvalSymlinks(res.Thread.Path)
+
 	if err != nil {
 		return nil, "", err
 	}
 
 	rel, err := filepath.Rel(root, src)
+
 	if err != nil || !filepath.IsLocal(rel) {
 		return nil, "", fmt.Errorf("codex session %s is stored outside its profile at %s", sessionID, src)
 	}
@@ -399,7 +406,6 @@ type codexRateWindow struct {
 	WindowDurationMins int64   `json:"windowDurationMins"`
 }
 
-// codexRateLimits is the subset of `account/rateLimits/read` csm reads; a field the server sends as null stays zero.
 type codexRateLimits struct {
 	RateLimits struct {
 		Primary         codexRateWindow `json:"primary"`
@@ -427,7 +433,6 @@ func (r codexRateLimits) usage() Usage {
 		}
 
 		window := UsageWindow{UsedPercent: w.UsedPercent, ResetsAt: time.Unix(w.ResetsAt, 0)}
-		// Plans without a short window report the weekly one as primary.
 		weekly := w.WindowDurationMins > 24*60 || (w.WindowDurationMins == 0 && i == 1)
 		if weekly {
 			u.SevenDay = window
@@ -440,7 +445,6 @@ func (r codexRateLimits) usage() Usage {
 		u.SpendLimit = UsageWindow{UsedPercent: 100 - l.RemainingPercent, ResetsAt: time.Unix(l.ResetsAt, 0)}
 	}
 
-	// With credits the account keeps working past its plan limit, so it is not treated as limited.
 	onCredits := limits.Credits.HasCredits || limits.Credits.Unlimited
 	u.Limited = limits.RateLimitReachedType != "" && !onCredits
 

@@ -26,7 +26,6 @@ type failoverResult struct {
 }
 
 type scenario struct {
-	// provider is empty for Claude Code.
 	provider  string
 	limited   string
 	fakeError string
@@ -84,17 +83,20 @@ func runFailoverScenario(csmPath string, sc scenario) (failoverResult, error) {
 	}
 
 	p, err := provider.New(providerID, shim)
+
 	if err != nil {
 		return res, err
 	}
 
 	s, err := initState(filepath.Join(tmp, "csm"))
+
 	if err != nil {
 		return res, err
 	}
 
 	for _, name := range []string{"alpha", "beta"} {
 		a, err := s.addAccount(providerID, name, time.Now())
+
 		if err != nil {
 			return res, err
 		}
@@ -106,6 +108,7 @@ func runFailoverScenario(csmPath string, sc scenario) (failoverResult, error) {
 		}
 
 		st, err := verifyProfile(p, a)
+
 		if err != nil {
 			return res, err
 		}
@@ -120,6 +123,7 @@ func runFailoverScenario(csmPath string, sc scenario) (failoverResult, error) {
 	}
 
 	features, err := p.Features()
+
 	if err != nil {
 		return res, err
 	}
@@ -133,7 +137,7 @@ func runFailoverScenario(csmPath string, sc scenario) (failoverResult, error) {
 		features:    features,
 		cwd:         project,
 		project:     detectProject(project),
-		out:         &out,
+		log:         &Logger{out: &out, err: &out},
 		in:          bufio.NewReader(strings.NewReader("")),
 		unavailable: map[string]bool{},
 	}
@@ -180,7 +184,6 @@ func runFailoverScenario(csmPath string, sc scenario) (failoverResult, error) {
 		case provider.CopilotID:
 			transcript = filepath.Join("session-state", res.checkpoint.SessionID, "events.jsonl")
 		case provider.GeminiID:
-			// Gemini CLI imports a carried session under a new ID.
 			transcript = filepath.Join(".gemini", "tmp", "*", "chats", "session-*.jsonl")
 		}
 
@@ -199,16 +202,18 @@ func runFailoverScenario(csmPath string, sc scenario) (failoverResult, error) {
 	return res, nil
 }
 
-func cmdTestFailover(providerID string) error {
+func cmdTestFailover(log *Logger, providerID string) error {
 	csmPath, err := os.Executable()
+
 	if err != nil {
 		return err
 	}
 
-	fmt.Printf("Simulating failover with a fake %s (no real usage)...\n", providerName(providerID))
-	fmt.Println()
+	log.Info("Simulating failover with a fake %s (no real usage)...", providerName(providerID))
+	log.Blank()
 
 	res, err := runFailoverScenario(csmPath, scenario{provider: providerID, limited: "alpha"})
+
 	if err != nil {
 		return fmt.Errorf("FAIL: %w\n\n%s", err, res.output)
 	}
@@ -232,6 +237,7 @@ func cmdTestFailover(providerID string) error {
 	}
 
 	exhausted, err := runFailoverScenario(csmPath, scenario{provider: providerID, limited: "alpha,beta"})
+
 	if err != nil {
 		return fmt.Errorf("FAIL: %w\n\n%s", err, exhausted.output)
 	}
@@ -240,9 +246,9 @@ func cmdTestFailover(providerID string) error {
 		failures = append(failures, "with every account limited, failover did not pause after one pass")
 	}
 
-	// Codex reports no errors to csm, so there is no overloaded error to misread as a limit.
 	if providerID == provider.ClaudeID {
 		network, err := runFailoverScenario(csmPath, scenario{limited: "alpha", fakeError: "overloaded"})
+
 		if err != nil {
 			return fmt.Errorf("FAIL: %w\n\n%s", err, network.output)
 		}
@@ -256,16 +262,16 @@ func cmdTestFailover(providerID string) error {
 		return fmt.Errorf("FAIL\n\n%s\n\nOutput:\n%s", strings.Join(failures, "\n"), res.output)
 	}
 
-	fmt.Println("PASS")
-	fmt.Println()
-	fmt.Println("alpha → beta")
-	fmt.Println("checkpoint saved")
-	fmt.Println("session restarted (resumed " + res.checkpoint.SessionID[:8] + " under beta)")
-	fmt.Println("project preserved (branch and uncommitted changes untouched)")
-	fmt.Println("all accounts limited → failover paused, no cycling")
+	log.Info("PASS")
+	log.Blank()
+	log.Info("alpha → beta")
+	log.Info("checkpoint saved")
+	log.Info("%s", "session restarted (resumed "+res.checkpoint.SessionID[:8]+" under beta)")
+	log.Info("project preserved (branch and uncommitted changes untouched)")
+	log.Info("all accounts limited → failover paused, no cycling")
 
 	if providerID == provider.ClaudeID {
-		fmt.Println("overloaded error → no switch")
+		log.Info("overloaded error → no switch")
 	}
 
 	return nil

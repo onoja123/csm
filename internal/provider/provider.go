@@ -1,4 +1,3 @@
-// Package provider holds everything specific to a coding agent.
 package provider
 
 import (
@@ -20,7 +19,6 @@ const (
 	CopilotID = "copilot"
 )
 
-// IDs lists the supported providers; each ID is also the csm command that runs the agent.
 var IDs = []string{ClaudeID, CodexID, GeminiID, CopilotID}
 
 type Provider interface {
@@ -40,17 +38,13 @@ type Provider interface {
 	RedactArgs(args []string) []string
 	HasSessionFlag(args []string) bool
 	NewSessionArgs(f Features, sessionID, handoffNote string) []string
-	// CurrentSession is for agents that cannot push their session ID to csm; the others return "".
 	CurrentSession(profileDir, cwd string, since time.Time) (string, error)
-	// CarrySession returns no resumeArgs when the session cannot be carried, and no newSessionID when the agent resumes it under an ID csm cannot know.
 	CarrySession(fromProfile, toProfile, sessionID string) (resumeArgs []string, newSessionID string, err error)
 	FetchUsage(ctx context.Context, profileDir string) (Usage, error)
 	UsageCheckNote() string
-	// LimitPollInterval is non-zero for agents that have no failure hook, so limits are found by polling usage.
 	LimitPollInterval() time.Duration
 }
 
-// New returns a provider without looking for its executable; an empty ID means Claude Code.
 func New(id, path string) (Provider, error) {
 	switch id {
 	case "", ClaudeID:
@@ -84,6 +78,7 @@ func Find(id string) (Provider, error) {
 // probeOutput runs an agent command with a throwaway profile, because some agents write to their home even for --version.
 func probeOutput(p Provider, args ...string) ([]byte, error) {
 	dir, err := os.MkdirTemp("", "csm-probe-")
+
 	if err != nil {
 		return nil, err
 	}
@@ -180,7 +175,6 @@ func (r StopReason) Describe() string {
 	}
 }
 
-// Identity is who the agent says it is logged in as for one profile directory.
 type Identity struct {
 	LoggedIn   bool
 	Email      string
@@ -190,9 +184,8 @@ type Identity struct {
 type Features struct {
 	Auth bool
 	// Supervise means csm can observe and own a session: hooks for Claude Code, the app-server and --no-daemon for Codex, --session-id for Gemini CLI and Copilot CLI.
-	Supervise bool
-	Resume    bool
-	// SessionID means csm can choose the ID of a new session.
+	Supervise    bool
+	Resume       bool
 	SessionID    bool
 	SystemPrompt bool
 	UsageProbe   bool
@@ -222,8 +215,7 @@ type Usage struct {
 	FiveHour   UsageWindow `json:"five_hour,omitzero"`
 	SevenDay   UsageWindow `json:"seven_day,omitzero"`
 	SpendLimit UsageWindow `json:"spend_limit,omitzero"`
-	// Limited is true when the agent reported that requests are currently being rejected.
-	Limited bool `json:"limited,omitempty"`
+	Limited    bool        `json:"limited,omitempty"`
 }
 
 func (u Usage) Empty() bool {
