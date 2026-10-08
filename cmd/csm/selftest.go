@@ -23,6 +23,7 @@ type failoverResult struct {
 	gitAfter   string
 	output     string
 	usage      map[string]UsageRecord
+	files      map[string]string
 }
 
 type scenario struct {
@@ -192,6 +193,18 @@ func runFailoverScenario(csmPath string, sc scenario) (failoverResult, error) {
 		for _, match := range matches {
 			data, _ := os.ReadFile(match)
 			res.resumed = res.resumed || strings.Contains(string(data), `"profile":"beta","resumed":true`)
+		}
+	}
+
+	res.files = map[string]string{}
+
+	for name, path := range map[string]string{
+		"beta-config":  filepath.Join(s.accountsDir(), "beta", ".claude.json"),
+		"mcp-snapshot": filepath.Join(r.stateDir, mcpSnapshotFile),
+		"mcp-handoff":  filepath.Join(r.stateDir, mcpHandoffFile),
+	} {
+		if data, err := os.ReadFile(path); err == nil {
+			res.files[name] = string(data)
 		}
 	}
 

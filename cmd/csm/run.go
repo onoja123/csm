@@ -450,6 +450,8 @@ func (r *runner) beginSwitch(from *Account, to string, res *outcome) {
 		slog.Debug("save checkpoint", "err", err)
 	}
 
+	r.snapshotMCP(from)
+
 	t := Transition{Version: stateVersion, Provider: r.provider.ID(), ProjectDir: r.project.Dir, From: from.Name, To: to, SessionID: res.sessionID, Reason: res.reason, CSMPID: os.Getpid(), StartedAt: now}
 
 	if err := writeJSON(filepath.Join(r.stateDir, transitionFile), t); err != nil {
@@ -491,13 +493,15 @@ func (r *runner) switchAccount(from *Account, to string, res outcome) ([]string,
 	}
 
 	r.step("Selecting "+to, true)
-	args, sessionID, resumed := r.handoffArgs(from, target, res.sessionID)
+	rep := r.handoffMCP(from, target)
+	args, sessionID, resumed := r.handoffArgs(from, target, res.sessionID, rep.Summary())
 	r.printRestore(to, resumed)
+	r.printMCP(rep)
 
 	return args, sessionID, nil
 }
 
-func (r *runner) handoffArgs(from, to *Account, sessionID string) (args []string, sessionIDOut string, resumed bool) {
+func (r *runner) handoffArgs(from, to *Account, sessionID, mcpNote string) (args []string, sessionIDOut string, resumed bool) {
 	if sessionID != "" && r.features.CanContinue() {
 		resumeArgs, newSessionID, err := r.provider.CarrySession(from.ConfigDir, to.ConfigDir, sessionID)
 		if err != nil {
@@ -513,7 +517,7 @@ func (r *runner) handoffArgs(from, to *Account, sessionID string) (args []string
 		sessionIDOut = provider.NewSessionID()
 	}
 
-	return r.provider.NewSessionArgs(r.features, sessionIDOut, r.handoffNote(from.Name)), sessionIDOut, false
+	return r.provider.NewSessionArgs(r.features, sessionIDOut, r.handoffNote(from.Name, mcpNote)), sessionIDOut, false
 }
 
 func (r *runner) printRestore(to string, resumed bool) {
@@ -538,11 +542,15 @@ func (r *runner) printRestore(to string, resumed bool) {
 	r.log.Blank()
 }
 
-func (r *runner) handoffNote(fromAccount string) string {
+func (r *runner) handoffNote(fromAccount, mcpNote string) string {
 	var b strings.Builder
 
 	fmt.Fprintf(&b, "This session continues work that was in progress in a previous %s session (account %q) in this directory. ", r.provider.Name(), fromAccount)
 	b.WriteString("That conversation could not be transferred, so ask the user what they were working on if it is unclear. ")
+
+	if mcpNote != "" {
+		b.WriteString(mcpNote + " ")
+	}
 
 	if status := gitStatusShort(r.project.Dir); status != "" {
 		fmt.Fprintf(&b, "Current git status:\n%s", status)
@@ -606,8 +614,10 @@ func (r *runner) recoverTransition() (*recovery, error) {
 		return nil, err
 	}
 
-	args, sessionID, resumed := r.handoffArgs(from, to, t.SessionID)
+	rep := r.handoffMCP(from, to)
+	args, sessionID, resumed := r.handoffArgs(from, to, t.SessionID, rep.Summary())
 	r.printRestore(to.Name, resumed)
+	r.printMCP(rep)
 
 	return &recovery{args: args, sessionID: sessionID}, nil
 }

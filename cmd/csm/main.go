@@ -35,6 +35,8 @@ Commands:
   next [provider]          Move to the next ready account
   usage [name...] [--cached]  Check 5-hour and 7-day plan usage per account
   auto on|off|status       Control automatic failover on usage limits
+  mcp [account]            Show the MCP servers each account would start here
+  mcp handoff <from> <to>  Preview moving MCP servers between accounts (--apply writes them)
   claude [args...]         Run Claude Code under the active Claude Code account
   codex [args...]          Run Codex under the active Codex account
   gemini [args...]         Run Gemini CLI under the active Gemini CLI account
@@ -147,6 +149,9 @@ func run(args []string) int {
 
 	case "auto":
 		err = cmdAuto(log, home, rest)
+
+	case "mcp":
+		err = cmdMCP(log, home, rest)
 
 	case provider.ClaudeID, provider.CodexID, provider.GeminiID, provider.CopilotID:
 		code, err = cmdRun(log, home, cmd, rest)

@@ -98,7 +98,7 @@ csm next [provider]      # move to the next ready account
 csm status               # project, accounts, running session, last checkpoint
 ```
 
-If a `csm` session is running, `use` and `next` switch it: `csm` saves a checkpoint, stops the agent, and restarts it under the new account with the same conversation. Otherwise they change which account the next run uses.
+If a `csm` session is running, `use` and `next` switch it: `csm` saves a checkpoint, stops the agent, and restarts it under the new account with the same conversation and its MCP servers (see [MCP failover](#mcp-failover)). Otherwise they change which account the next run uses.
 
 ### Usage
 
@@ -128,10 +128,21 @@ With auto failover on, `csm` switches to the next ready account when the running
 
 `csm` only switches on a known usage limit. A plain rate limit, an authentication error, or a server error is reported and nothing is switched.
 
+### MCP servers
+
+```bash
+csm mcp                               # the MCP servers each account would start in this directory
+csm mcp <account>                     # one account
+csm mcp handoff <from> <to>           # preview moving MCP servers to another account, even of another agent
+csm mcp handoff <from> <to> --apply   # write the compatible ones into the target profile
+```
+
+See [MCP failover](#mcp-failover) for what moves and what does not.
+
 ### Diagnostics
 
 ```bash
-csm doctor           # check the install, isolation, and every account
+csm doctor           # check the install, isolation, every account and its MCP servers
 csm test failover    # simulate a failover with a fake agent (add `codex` for Codex)
 csm --debug <cmd>    # log what csm is doing to stderr
 ```
@@ -175,9 +186,91 @@ Your working directory, branch and uncommitted changes are never touched. If a c
 - Codex: `csm` reads the account's limits from the app-server once a minute, and once more when Codex exits. Detection can lag by up to a minute.
 - Gemini CLI and Copilot CLI: no signal is available. Switch by hand with `csm next`.
 
+## MCP failover
+
+MCP servers are configured per agent profile, so a fresh profile would start without them. When `csm` switches accounts it carries the MCP *configuration* along. It distinguishes four things:
+
+| | Moves with a switch? |
+| --- | --- |
+| csm's own state (checkpoint, session ID, project, branch) | yes |
+| MCP server configuration (name, transport, command, arguments, URL) | yes, where the target agent supports it |
+| MCP runtime state (what a server has stored while running) | **no**; it belongs to the server |
+| Secrets (API keys, OAuth logins, header values, environment values) | **never** between agents; see below |
+
+**MCP runtime state is not portable between agents.** `csm` recreates configuration; it never copies a server's databases, caches or credential stores.
+
+### What csm reads
+
+| Agent | Configuration read |
+| --- | --- |
+| Claude Code | `<profile>/.claude.json` (user scope, and the local scope entry for the current directory), `<cwd>/.mcp.json` (project scope, with its approval state) |
+| Codex | `[mcp_servers.*]` tables in `<profile>/config.toml` |
+| Gemini CLI | `mcpServers` in `<profile>/.gemini/settings.json` |
+| GitHub Copilot CLI | `mcpServers` in `<profile>/mcp-config.json` |
+
+Before a switch `csm` writes a snapshot to `~/.csm/projects/<id>/mcp-snapshot.json`, and the result to `mcp-handoff.json`. Both hold server names, transports, commands, arguments, URLs and the *names* of environment variables and headers. Values are never written; an argument that looks like a credential (a URL with a password, the value of `--token`) is replaced by `<redacted>`.
+
+### Claude → Claude (and any same-agent switch)
+
+Both profiles belong to the same agent, so each server's own definition is copied into the target profile as it is, environment values included, the way you would recreate it with `claude mcp add`. Rules:
+
+- A server the target profile already has **wins**; the source definition is not written.
+- Project scope servers in `.mcp.json` are shared by both profiles already. Only a recorded approval moves, and Claude Code only honours it in a profile that has already trusted the directory; `csm` never grants that trust. Otherwise the server is marked ⚠ and Claude Code asks for approval on the next start.
+- OAuth logins made with `claude mcp login` do not move. The server is carried and marked ⚠; log in again in the new profile.
+- The configuration file is rewritten atomically with its existing mode (Claude Code uses `0600`). Everything else in the file is preserved.
+- `csm` never writes through a symlink. If a profile shares its MCP file with your own settings (`--link-settings`), the handoff reports a failure for that server and nothing is changed.
+
+### Claude → Codex, or any other pair of agents
+
+A switch between agents is not automatic in `csm`; run it by hand:
+
+```bash
+csm mcp handoff personal work-codex          # preview
+csm mcp handoff personal work-codex --apply  # write
+```
+
+Each server is reduced to a normalised description (name, transport, command, arguments, URL, environment variable names) and rebuilt in the target agent's own format. Then:
+
+- **Environment and header values are not copied.** Codex and Gemini CLI can read a variable from their own environment, so the server is written with the variable *names* (`env_vars = [...]` for Codex, `"$NAME"` references for Gemini CLI) and marked ✓ if the variable is set in your shell, ⚠ if it is not. Claude Code and Copilot CLI have no such form, so the server is written without its environment and marked ⚠ with the names you need to set there.
+- Header values never move; a server that needs one is marked ⚠.
+- A server whose arguments contain a credential is not written at all; add it yourself.
+- A transport the target does not support (for example SSE for Codex) is marked ✗ and skipped.
+- HTTP servers without a stored header may need a login in the target agent.
+
+```
+MCP handoff personal (Claude Code) → work-codex (Codex)
+
+  ✓ filesystem
+  ⚠ github requires authentication: MCP requires missing environment variable: GITHUB_TOKEN
+  ✗ legacy unsupported by work-codex: sse transport is not supported by Codex
+  ⚠ linear requires authentication: may need a login in work-codex
+  ⚠ postgres requires authentication: its arguments contain a credential; add it to work-codex yourself; runtime state stays with the server
+```
+
+### Secrets
+
+`csm` never puts an MCP secret value in a snapshot, a handoff file, a handoff note for the agent, its output or its debug log. It only tells you *which* variable is needed:
+
+```
+⚠ github requires authentication: MCP requires missing environment variable: GITHUB_TOKEN
+```
+
+That message appears when a configuration refers to `${GITHUB_TOKEN}` and the variable is not set in the shell `csm` runs in. Export it before starting the agent, or set the value in the target agent's own configuration.
+
+### Stateful servers
+
+`csm` guesses from the configuration whether a server keeps local state (a database file in its arguments, a `*_PATH`, `*_DIR` or `DATABASE_URL` variable, servers such as `memory`, `sqlite` or `postgres`) and says so: `runtime state stays with the server`. The configuration moves; whatever the server stored does not. Servers that offer their own export and import can be supported later through the same per-agent adapter; nothing is copied blindly today.
+
+### Diagnosing
+
+- `csm mcp` lists the servers every account would start in the current directory, with ⚠ for missing variables or logins.
+- `csm doctor` includes one `MCP <account>` row per account and reports an unreadable MCP configuration as a problem.
+- A failed MCP handoff never stops the account switch. The agent starts anyway; the report says what needs attention.
+
 ## Security
 
 - `csm` does not read, copy or store tokens, cookies or Keychain secrets. Logging in is always the agent's own login flow.
+- MCP snapshots and handoff reports hold names, never values. Between two profiles of the same agent a server's definition is copied as it is; between different agents only the shape of the server moves and you add the credentials yourself.
 - `accounts.json` holds names, paths, timestamps and the account email or username.
 - `~/.csm` is created with mode `0700`, files with `0600`.
 - `csm` refuses to run when an environment variable would override the profile's login:
@@ -206,6 +299,9 @@ Your working directory, branch and uncommitted changes are never touched. If a c
 - Copilot CLI keeps tokens in the macOS Keychain and falls back to your `gh` login when a profile has none of its own.
 - A Codex session stored in paginated history cannot be carried; `csm` starts a new session instead.
 - Flags you pass on the first launch (for example `--model`) are not repeated after a switch.
+- MCP handoff was verified against the real CLIs (Claude Code 2.1.294, Codex 0.161, Gemini CLI 0.63, Copilot CLI 1.0.93): each lists the servers csm wrote. A live switch between two signed-in accounts of another agent has only been exercised with csm's fake agents.
+- MCP runtime state is never carried. A server that remembers things between calls starts over in the new profile unless it keeps that state somewhere both profiles reach.
+- `csm` does not read project-level MCP files of Codex, Gemini CLI or Copilot CLI, only the profile's own.
 
 ## Troubleshooting
 
@@ -229,9 +325,12 @@ go test -race ./...
 The tests do not need a real agent. Each agent has a fake that runs through the `csm` binary. CI runs the suite on macOS and Ubuntu.
 
 ```
-cmd/csm/              the CLI: commands, state, runner, logger
-internal/provider/    one file per agent, plus its fake
+cmd/csm/              the CLI: commands, state, runner, logger, MCP handoff
+internal/provider/    one file per agent, plus its fake and its MCP adapter
+internal/mcp/         portable MCP server description, snapshot and handoff report
 ```
+
+To give an agent MCP handoff, implement `mcp.Adapter` (parse, validate, prepare) next to its provider and expose it with an `MCP()` method.
 
 To add an agent, implement the `Provider` interface in `internal/provider`, register it in `provider.go`, and add its command to the switch in `cmd/csm/main.go`.
 
