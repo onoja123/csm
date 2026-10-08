@@ -25,6 +25,7 @@ type failoverResult struct {
 	output     string
 	usage      map[string]UsageRecord
 	files      map[string]string
+	accounts   map[string]Account
 }
 
 type scenario struct {
@@ -36,6 +37,7 @@ type scenario struct {
 	crossTo string
 	// seed is a transcript the fake Claude Code writes into every new session before its own line.
 	seed   string
+	policy string
 	before func(s *State, projectDir string)
 	during func(home, projectDir string)
 }
@@ -161,7 +163,15 @@ func runFailoverScenario(csmPath string, sc scenario) (failoverResult, error) {
 		a.Email, a.VerifiedAt = st.Email, time.Now()
 	}
 
-	s.Config.AutoFailover = true
+	if err := s.Config.setPolicy(policyAutomatic); err != nil {
+		return res, err
+	}
+
+	if sc.policy != "" {
+		if err := s.Config.setPolicy(sc.policy); err != nil {
+			return res, err
+		}
+	}
 
 	if err := s.save(); err != nil {
 		return res, err
@@ -256,6 +266,14 @@ func runFailoverScenario(csmPath string, sc scenario) (failoverResult, error) {
 		for _, match := range matches {
 			data, _ := os.ReadFile(match)
 			res.resumed = res.resumed || strings.Contains(string(data), `"profile":"beta","resumed":true`)
+		}
+	}
+
+	res.accounts = map[string]Account{}
+
+	if fresh, err := loadState(s.Home); err == nil {
+		for _, a := range fresh.Accounts {
+			res.accounts[a.Name] = a
 		}
 	}
 

@@ -30,6 +30,7 @@ type Config struct {
 	ActiveByProvider map[string]string `json:"active_by_provider,omitempty"`
 	AccountOrder     []string          `json:"account_order"`
 	AutoFailover     bool              `json:"auto_failover"`
+	FailoverPolicy   string            `json:"failover_policy,omitempty"`
 }
 
 type Account struct {
@@ -42,6 +43,11 @@ type Account struct {
 	VerifiedAt    time.Time `json:"verified_at,omitzero"`
 	Email         string    `json:"email,omitempty"`
 	CooldownUntil time.Time `json:"cooldown_until,omitzero"`
+	// Health history keeps timestamps and a failure classification, never the agent's output.
+	LastSuccessAt  time.Time           `json:"last_success_at,omitzero"`
+	LastFailureAt  time.Time           `json:"last_failure_at,omitzero"`
+	LastFailure    provider.StopReason `json:"last_failure,omitempty"`
+	RecentFailures []time.Time         `json:"recent_failures,omitempty"`
 }
 
 type accountsFile struct {

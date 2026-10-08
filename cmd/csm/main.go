@@ -31,10 +31,12 @@ Commands:
   account remove <name>    Forget an account (its profile directory is kept)
   account enable <name>    Include an account in switching
   account disable <name>   Exclude an account from switching
+  account health <name>    Show an account's health, usage and failure history
+  account priority <name> <n>  Move an account to position n among its agent's accounts
   use <name|number>        Make an account active (switches a running session)
   next [provider]          Move to the next ready account
   usage [name...] [--cached]  Check 5-hour and 7-day plan usage per account
-  auto on|off|status       Control automatic failover on usage limits
+  auto automatic|manual|disabled|status  Set what happens on a usage limit (on/off still work)
   mcp [account]            Show the MCP servers each account would start here
   mcp handoff <from> <to>  Preview moving MCP servers between accounts (--apply writes them)
   claude [args...]         Run Claude Code under the active Claude Code account
