@@ -46,15 +46,6 @@ func detectProject(cwd string) Project {
 	return p
 }
 
-func gitStatusShort(dir string) string {
-	out, err := exec.Command("git", "-C", dir, "status", "--short", "--branch").Output()
-	if err != nil {
-		return ""
-	}
-
-	return strings.TrimSpace(string(out))
-}
-
 func projectID(dir string) string {
 	sum := sha256.Sum256([]byte(dir))
 

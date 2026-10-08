@@ -71,10 +71,11 @@ func (c Copilot) Features() (Features, error) {
 	sessionID := strings.Contains(help, "--session-id")
 
 	return Features{
-		Auth:      strings.Contains(help, "\n  login "),
-		Supervise: sessionID,
-		Resume:    strings.Contains(help, "--resume"),
-		SessionID: sessionID,
+		Auth:          strings.Contains(help, "\n  login "),
+		Supervise:     sessionID,
+		Resume:        strings.Contains(help, "--resume"),
+		SessionID:     sessionID,
+		InitialPrompt: strings.Contains(help, "--interactive <prompt>"),
 	}, nil
 }
 

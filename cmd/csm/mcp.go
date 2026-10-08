@@ -44,39 +44,6 @@ func (r *runner) snapshotMCP(from *Account) {
 	}
 }
 
-// handoffMCP reads the source profile again rather than the saved snapshot, because only an in-memory snapshot carries the agent's own definitions.
-func (r *runner) handoffMCP(from, to *Account) mcp.Report {
-	adapter, ok := provider.MCPAdapter(r.provider)
-	if !ok {
-		return mcp.Report{}
-	}
-
-	snap, err := mcp.Take(adapter, from.ConfigDir, r.cwd, time.Now())
-	if err != nil {
-		slog.Debug("mcp snapshot unreadable", "account", from.Name, "err", err)
-		r.step("Carrying MCP configuration (unreadable)", false)
-
-		return mcp.Report{}
-	}
-
-	if len(snap.Servers) == 0 {
-		os.Remove(filepath.Join(r.stateDir, mcpHandoffFile))
-
-		return mcp.Report{}
-	}
-
-	target := mcp.Target{Adapter: adapter, ProfileDir: to.ConfigDir, ProjectDir: r.cwd, Label: to.Name}
-	rep := mcp.Handoff(snap, target, envPresent, false, time.Now())
-
-	if err := writeJSON(filepath.Join(r.stateDir, mcpHandoffFile), rep); err != nil {
-		slog.Debug("save mcp handoff", "err", err)
-	}
-
-	r.step("Carrying MCP configuration", rep.Count(mcp.Failed, mcp.Unsupported) == 0)
-
-	return rep
-}
-
 func (r *runner) printMCP(rep mcp.Report) {
 	if len(rep.Results) == 0 {
 		return

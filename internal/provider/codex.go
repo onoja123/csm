@@ -73,10 +73,11 @@ func (c Codex) Features() (Features, error) {
 	appServer := strings.Contains(help, "\n  app-server ")
 
 	return Features{
-		Auth:       strings.Contains(help, "\n  login "),
-		Supervise:  appServer && strings.Contains(help, "--no-daemon"),
-		Resume:     strings.Contains(help, "\n  resume "),
-		UsageProbe: appServer,
+		Auth:          strings.Contains(help, "\n  login "),
+		Supervise:     appServer && strings.Contains(help, "--no-daemon"),
+		Resume:        strings.Contains(help, "\n  resume "),
+		InitialPrompt: strings.Contains(help, "[PROMPT]"),
+		UsageProbe:    appServer,
 	}, nil
 }
 

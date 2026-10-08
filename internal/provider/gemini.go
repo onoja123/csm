@@ -72,10 +72,11 @@ func (g Gemini) Features() (Features, error) {
 	sessionID := strings.Contains(help, "--session-id")
 
 	return Features{
-		Auth:      true,
-		Supervise: sessionID,
-		Resume:    strings.Contains(help, "--session-file"),
-		SessionID: sessionID,
+		Auth:          true,
+		Supervise:     sessionID,
+		Resume:        strings.Contains(help, "--session-file"),
+		SessionID:     sessionID,
+		InitialPrompt: strings.Contains(help, "--prompt-interactive"),
 	}, nil
 }
 

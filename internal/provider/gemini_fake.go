@@ -24,7 +24,7 @@ func RunFakeGemini(args []string) int {
 		return 0
 
 	case len(args) > 0 && args[0] == "--help":
-		fmt.Println("Usage: gemini [options] [command]\n\nOptions:\n  -r, --resume        Resume a previous session.\n      --session-file  Load a session from a JSON file\n      --session-id    Start a new session with a manually provided UUID.")
+		fmt.Println("Usage: gemini [options] [command]\n\nOptions:\n  -r, --resume              Resume a previous session.\n  -i, --prompt-interactive  Execute the provided prompt and continue in interactive mode\n      --session-file        Load a session from a JSON file\n      --session-id          Start a new session with a manually provided UUID.")
 
 		return 0
 	}
@@ -37,12 +37,15 @@ func RunFakeGemini(args []string) int {
 		return 0
 	}
 
-	sessionID, imported := NewSessionID(), false
+	sessionID, imported, prompt := NewSessionID(), false, ""
 
 	for i := 0; i+1 < len(args); i++ {
 		switch args[i] {
 		case "--session-id":
 			sessionID = args[i+1]
+
+		case "-i", "--prompt-interactive":
+			prompt = args[i+1]
 
 		case "--session-file":
 			if _, err := os.Stat(args[i+1]); err != nil {
@@ -59,7 +62,7 @@ func RunFakeGemini(args []string) int {
 	chats := filepath.Join(dir, "tmp", filepath.Base(cwd), "chats")
 	os.MkdirAll(chats, 0o700)
 	name := fmt.Sprintf("session-%d-%s.jsonl", time.Now().UnixMilli(), sessionID[:8])
-	content := fmt.Sprintf("{\"sessionId\":%q,\"projectHash\":%q}\n{\"profile\":%q,\"resumed\":%t}\n", sessionID, geminiProjectHash(cwd), profile, imported)
+	content := fmt.Sprintf("{\"sessionId\":%q,\"projectHash\":%q}\n{\"profile\":%q,\"resumed\":%t,\"prompt\":%q}\n", sessionID, geminiProjectHash(cwd), profile, imported, prompt)
 
 	if err := os.WriteFile(filepath.Join(chats, name), []byte(content), 0o600); err != nil {
 		return 1

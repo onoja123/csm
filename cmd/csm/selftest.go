@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/onoja123/csm/internal/handoff"
 	"github.com/onoja123/csm/internal/provider"
 )
 
@@ -31,8 +32,12 @@ type scenario struct {
 	limited   string
 	fakeError string
 	hold      string
-	before    func(s *State, projectDir string)
-	during    func(home, projectDir string)
+	// crossTo adds an account "work-<provider>" of another agent, with its own fake, so a switch to it can be requested.
+	crossTo string
+	// seed is a transcript the fake Claude Code writes into every new session before its own line.
+	seed   string
+	before func(s *State, projectDir string)
+	during func(home, projectDir string)
 }
 
 func runFailoverScenario(csmPath string, sc scenario) (failoverResult, error) {
@@ -71,13 +76,24 @@ func runFailoverScenario(csmPath string, sc scenario) (failoverResult, error) {
 
 	providerID := providerOrDefault(sc.provider)
 	shim := filepath.Join(tmp, providerID)
-	script := fmt.Sprintf("#!/bin/sh\nexec '%s' __fake-%s \"$@\"\n", strings.ReplaceAll(csmPath, "'", `'\''`), providerID)
+	env := map[string]string{"CSM_FAKE_LIMIT": sc.limited, "CSM_FAKE_ERROR": sc.fakeError, "CSM_FAKE_HOLD": sc.hold, "CSM_FAKE_SEED": sc.seed}
 
-	if err := os.WriteFile(shim, []byte(script), 0o700); err != nil {
-		return res, err
+	for _, id := range []string{providerID, sc.crossTo} {
+		if id == "" {
+			continue
+		}
+
+		path := filepath.Join(tmp, id)
+		script := fmt.Sprintf("#!/bin/sh\nexec '%s' __fake-%s \"$@\"\n", strings.ReplaceAll(csmPath, "'", `'\''`), id)
+
+		if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
+			return res, err
+		}
+
+		env["CSM_"+strings.ToUpper(id)] = path
 	}
 
-	for key, value := range map[string]string{"CSM_" + strings.ToUpper(providerID): shim, "CSM_FAKE_LIMIT": sc.limited, "CSM_FAKE_ERROR": sc.fakeError, "CSM_FAKE_HOLD": sc.hold} {
+	for key, value := range env {
 		defer os.Setenv(key, os.Getenv(key))
 
 		os.Setenv(key, value)
@@ -109,6 +125,34 @@ func runFailoverScenario(csmPath string, sc scenario) (failoverResult, error) {
 		}
 
 		st, err := verifyProfile(p, a)
+
+		if err != nil {
+			return res, err
+		}
+
+		a.Email, a.VerifiedAt = st.Email, time.Now()
+	}
+
+	if sc.crossTo != "" {
+		other, err := provider.New(sc.crossTo, filepath.Join(tmp, sc.crossTo))
+
+		if err != nil {
+			return res, err
+		}
+
+		a, err := s.addAccount(sc.crossTo, "work-"+sc.crossTo, time.Now())
+
+		if err != nil {
+			return res, err
+		}
+
+		os.MkdirAll(a.ConfigDir, 0o700)
+
+		if err := other.Login(a.ConfigDir); err != nil {
+			return res, err
+		}
+
+		st, err := verifyProfile(other, a)
 
 		if err != nil {
 			return res, err
@@ -158,7 +202,26 @@ func runFailoverScenario(csmPath string, sc scenario) (failoverResult, error) {
 		go sc.during(s.Home, r.project.Dir)
 	}
 
-	res.exitCode, err = r.run(nil)
+	var args []string
+
+	for {
+		var next *nextRun
+
+		res.exitCode, next, err = r.run(args)
+
+		if err != nil || next == nil {
+			break
+		}
+
+		r, err = newRunnerAt(r.log, s, next.providerID, csmPath, project)
+
+		if err != nil {
+			break
+		}
+
+		args = next.args
+	}
+
 	res.output = out.String()
 
 	if err != nil {
@@ -197,15 +260,43 @@ func runFailoverScenario(csmPath string, sc scenario) (failoverResult, error) {
 	}
 
 	res.files = map[string]string{}
-
-	for name, path := range map[string]string{
+	paths := map[string]string{
 		"beta-config":  filepath.Join(s.accountsDir(), "beta", ".claude.json"),
-		"mcp-snapshot": filepath.Join(r.stateDir, mcpSnapshotFile),
-		"mcp-handoff":  filepath.Join(r.stateDir, mcpHandoffFile),
-	} {
+		"mcp-snapshot": filepath.Join(s.projectStateDir(providerID, r.project.Dir), mcpSnapshotFile),
+		"mcp-handoff":  filepath.Join(s.projectStateDir(providerID, r.project.Dir), mcpHandoffFile),
+	}
+
+	if _, dir, err := handoff.Latest(s.handoffRoot(r.project.Dir)); err == nil {
+		paths["handoff-md"] = filepath.Join(dir, handoff.FileMD)
+		paths["handoff-json"] = filepath.Join(dir, handoff.FileJSON)
+	}
+
+	for name, path := range paths {
 		if data, err := os.ReadFile(path); err == nil {
 			res.files[name] = string(data)
 		}
+	}
+
+	transcriptOf := func(account string) string {
+		found := ""
+		filepath.WalkDir(filepath.Join(s.accountsDir(), account), func(path string, d os.DirEntry, err error) error {
+			if err == nil && !d.IsDir() {
+				if data, err := os.ReadFile(path); err == nil && strings.Contains(string(data), `"prompt":`) {
+					found = string(data)
+				}
+			}
+
+			return nil
+		})
+
+		return found
+	}
+
+	res.files["beta-transcript"] = transcriptOf("beta")
+
+	if sc.crossTo != "" {
+		res.active = s.active(sc.crossTo)
+		res.files["target-transcript"] = transcriptOf("work-" + sc.crossTo)
 	}
 
 	if _, ok, _ := s.loadTransition(providerID, r.project.Dir); ok {
