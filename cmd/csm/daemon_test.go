@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hinshun/vt10x"
 )
 
 func testDaemon(t *testing.T) (*daemon, *httptest.Server) {
@@ -243,5 +245,67 @@ func TestDestructiveDetection(t *testing.T) {
 		if looksDestructive(cmd) {
 			t.Errorf("%q should not look destructive", cmd)
 		}
+	}
+}
+
+func TestRemoteListenerRequiresToken(t *testing.T) {
+	d, _ := testDaemon(t)
+	token, err := remoteToken(d.home, false)
+
+	if err != nil || len(token) != 48 {
+		t.Fatalf("token: %q %v", token, err)
+	}
+
+	again, _ := remoteToken(d.home, false)
+
+	if again != token {
+		t.Fatal("token should be stable until rotated")
+	}
+
+	rotated, _ := remoteToken(d.home, true)
+
+	if rotated == token {
+		t.Fatal("rotate should change the token")
+	}
+
+	srv := httptest.NewServer(requireToken(rotated, d.handler()))
+	defer srv.Close()
+
+	res, _ := http.Get(srv.URL + "/v1/status")
+
+	if res.StatusCode != 401 {
+		t.Fatalf("no token: %d", res.StatusCode)
+	}
+
+	req, _ := http.NewRequest("GET", srv.URL+"/v1/status", nil)
+	req.Header.Set("Authorization", "Bearer "+rotated)
+	res, _ = http.DefaultClient.Do(req)
+
+	if res.StatusCode != 200 {
+		t.Fatalf("with token: %d", res.StatusCode)
+	}
+
+	req, _ = http.NewRequest("POST", srv.URL+"/v1/hooks/pre-tool-use", strings.NewReader("{}"))
+	req.Header.Set("Authorization", "Bearer "+rotated)
+	res, _ = http.DefaultClient.Do(req)
+
+	if res.StatusCode != 403 {
+		t.Fatalf("hooks over the network: %d", res.StatusCode)
+	}
+}
+
+func TestScreenRendersTerminalBytes(t *testing.T) {
+	term := vt10x.New(vt10x.WithSize(20, 4))
+	term.Write([]byte("hello\r\n\x1b[1mworld\x1b[0m\r\n"))
+	v := screenOf("r", term)
+
+	if v.Cols != 20 || v.Rows != 4 || v.Lines[0] != "hello" || v.Lines[1] != "world" || v.CursorY != 2 {
+		t.Fatalf("screen: %+v", v)
+	}
+
+	term.Write([]byte("\x1b[?1049h"))
+
+	if !screenOf("r", term).Alt {
+		t.Fatal("alternate screen not detected")
 	}
 }

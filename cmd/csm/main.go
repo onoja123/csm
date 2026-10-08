@@ -46,7 +46,8 @@ Commands:
   handoff <account>        Move the current task to another account, even of another agent
                            (--provider codex|gemini|copilot|claude for that agent's active account)
   test failover [codex]    Simulate a failover with a fake agent (no real usage)
-  serve [--detach]         Run the local service the CSM desktop app connects to (stop|status)
+  serve [--detach]         Run the local service the CSM apps connect to (stop|status|pair)
+                           (--listen HOST:PORT also accepts token-authenticated devices on the network)
   version                  Print version information`
 
 // version is overridden at build time with -ldflags "-X main.version=...".

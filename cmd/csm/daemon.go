@@ -132,6 +132,7 @@ func (d *daemon) handler() http.Handler {
 	mux.HandleFunc("POST /v1/runs", d.postRun)
 	mux.HandleFunc("GET /v1/runs/{id}", d.getRun)
 	mux.HandleFunc("GET /v1/runs/{id}/output", d.getRunOutput)
+	mux.HandleFunc("GET /v1/runs/{id}/screen", d.getRunScreen)
 	mux.HandleFunc("POST /v1/runs/{id}/input", d.postRunInput)
 	mux.HandleFunc("POST /v1/runs/{id}/resize", d.postRunResize)
 	mux.HandleFunc("POST /v1/runs/{id}/stop", d.postRunStop)
@@ -983,6 +984,15 @@ func (d *daemon) getRunOutput(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeOK(w, map[string]string{"run_id": rn.ID, "data": base64.StdEncoding.EncodeToString(rn.output())})
+}
+
+func (d *daemon) getRunScreen(w http.ResponseWriter, r *http.Request) {
+	rn, ok := d.lookupRun(w, r)
+	if !ok {
+		return
+	}
+
+	writeOK(w, rn.screen())
 }
 
 func (d *daemon) postRunInput(w http.ResponseWriter, r *http.Request) {

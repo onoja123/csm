@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/creack/pty"
+	"github.com/hinshun/vt10x"
 	"github.com/onoja123/csm/internal/provider"
 )
 
@@ -52,6 +53,22 @@ type agentRun struct {
 	lastOutputAt time.Time
 	task         taskInfo
 	taskCheck    time.Time
+
+	// The virtual terminal keeps the screen a phone can show as text; the raw bytes still go to desktop clients untouched.
+	vtMu       sync.Mutex
+	vt         vt10x.Terminal
+	screenPend *time.Timer
+}
+
+type screenView struct {
+	RunID   string   `json:"run_id"`
+	Cols    int      `json:"cols"`
+	Rows    int      `json:"rows"`
+	Lines   []string `json:"lines"`
+	CursorX int      `json:"cursor_x"`
+	CursorY int      `json:"cursor_y"`
+	Cursor  bool     `json:"cursor_visible"`
+	Alt     bool     `json:"alt_screen"`
 }
 
 type taskInfo struct {
@@ -206,6 +223,7 @@ func (m *runManager) spawn(s *State, kind, providerID, dir string, csmArgs, user
 		},
 		cmd: cmd,
 		tty: tty,
+		vt:  vt10x.New(vt10x.WithSize(cols, rows)),
 	}
 	m.runs[r.ID] = r
 	m.mu.Unlock()
@@ -242,6 +260,7 @@ func (m *runManager) pump(r *agentRun) {
 			r.lastOutputAt = time.Now()
 			r.mu.Unlock()
 			m.bus.publish("run.output", map[string]string{"run_id": r.ID, "data": base64.StdEncoding.EncodeToString(chunk)})
+			r.feedScreen(chunk, func() { m.bus.publish("run.screen", r.screen()) })
 		}
 
 		if err != nil {
@@ -354,7 +373,62 @@ func (r *agentRun) resize(cols, rows int) error {
 		return nil
 	}
 
+	r.vtMu.Lock()
+	r.vt.Resize(cols, rows)
+	r.vtMu.Unlock()
+
 	return pty.Setsize(r.tty, &pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)})
+}
+
+func (r *agentRun) feedScreen(chunk []byte, publish func()) {
+	r.vtMu.Lock()
+	r.vt.Write(chunk)
+
+	if r.screenPend == nil {
+		r.screenPend = time.AfterFunc(150*time.Millisecond, func() {
+			r.vtMu.Lock()
+			r.screenPend = nil
+			r.vtMu.Unlock()
+			publish()
+		})
+	}
+
+	r.vtMu.Unlock()
+}
+
+func (r *agentRun) screen() screenView {
+	r.vtMu.Lock()
+	defer r.vtMu.Unlock()
+
+	return screenOf(r.ID, r.vt)
+}
+
+func screenOf(id string, t vt10x.Terminal) screenView {
+	t.Lock()
+	defer t.Unlock()
+
+	cols, rows := t.Size()
+	v := screenView{RunID: id, Cols: cols, Rows: rows, Lines: make([]string, rows), Cursor: t.CursorVisible(), Alt: t.Mode()&vt10x.ModeAltScreen != 0}
+	cur := t.Cursor()
+	v.CursorX, v.CursorY = cur.X, cur.Y
+
+	for y := 0; y < rows; y++ {
+		line := make([]rune, 0, cols)
+
+		for x := 0; x < cols; x++ {
+			ch := t.Cell(x, y).Char
+
+			if ch == 0 {
+				ch = ' '
+			}
+
+			line = append(line, ch)
+		}
+
+		v.Lines[y] = strings.TrimRight(string(line), " ")
+	}
+
+	return v
 }
 
 func (r *agentRun) output() []byte {
