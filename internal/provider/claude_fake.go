@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -105,10 +106,16 @@ func RunFakeClaude(args []string) int {
 	signal.Notify(term, syscall.SIGTERM)
 
 	if slices.Contains(strings.Split(os.Getenv("CSM_FAKE_HOLD"), ","), profile) {
+		hold := 30 * time.Second
+
+		if secs, err := strconv.Atoi(os.Getenv("CSM_FAKE_HOLD_SECONDS")); err == nil && secs > 0 {
+			hold = time.Duration(secs) * time.Second
+		}
+
 		select {
 		case <-term:
 			return 143
-		case <-time.After(30 * time.Second):
+		case <-time.After(hold):
 			return 0
 		}
 	}
