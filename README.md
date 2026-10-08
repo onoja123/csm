@@ -94,11 +94,35 @@ Arguments are passed to the agent. It runs in your terminal as usual.
 
 ```bash
 csm use <name|number>    # make an account active
-csm next [provider]      # move to the next ready account
+csm next [provider]      # move to the next account in priority order
 csm status               # project, accounts, running session, last checkpoint
 ```
 
 If a `csm` session is running, `use` and `next` switch it: `csm` saves a checkpoint, stops the agent, and restarts it under the new account with the same conversation and its MCP servers (see [MCP failover](#mcp-failover)). Otherwise they change which account the next run uses.
+
+### Account health and priority
+
+```bash
+csm accounts                          # every account with its health, usage and priority
+csm account health <name>             # one account in detail: health, usage, last success, last failure, cooldown
+csm account priority <name> <n>       # make an account the n-th choice among its agent's accounts
+```
+
+```
+Accounts (Claude Code)
+────────────────────────────────
+
+  ● work         healthy                  5h 18% · 7d 40%    priority 1
+  ○ personal     warning                  5h 84% · 7d 61%    priority 2
+  ○ backup       rate_limited until 17:10 unknown            priority 3
+
+Order:
+work → personal → backup
+```
+
+Health is one of `healthy`, `warning` (a usage window above 80%), `rate_limited` (in cooldown, or the agent reported its requests rejected within the last hour), `authentication_required`, `unavailable` (disabled) or `unknown` (the last run ended with an error that was not a usage limit and nothing has worked since). Usage is shown only when the agent reported it and the window has not reset; otherwise it says `unknown`. `csm` never estimates usage.
+
+See [Account intelligence](#account-intelligence) for how health drives failover.
 
 ### Usage
 
@@ -119,14 +143,15 @@ For Claude Code a live check sends one small Haiku request per account (about 50
 ### Automatic failover
 
 ```bash
-csm auto on
-csm auto off
-csm auto status
+csm auto automatic     # switch to the best account when the running one hits a usage limit
+csm auto manual        # ask before switching (the default; `csm auto off` means the same)
+csm auto disabled      # report the limit and stop
+csm auto status        # current policy, priority and the order a switch would try
 ```
 
-With auto failover on, `csm` switches to the next ready account when the running one reports a usage limit. The limited account gets a one-hour cooldown. If every account is limited, `csm` stops instead of cycling. The request that hit the limit is not retried; send it again or type "continue".
+`csm auto on` is an alias of `automatic`. With `automatic`, `csm` switches to the best available account when the running one reports a usage limit. The limited account gets a one-hour cooldown. If every account is limited, `csm` stops instead of cycling. The request that hit the limit is not retried; send it again or type "continue".
 
-`csm` only switches on a known usage limit. A plain rate limit, an authentication error, or a server error is reported and nothing is switched.
+`csm` only switches on a known usage limit. A plain rate limit, an authentication error, or a server error is reported, recorded in the account's health, and nothing is switched.
 
 ### Handing a task to another agent
 
@@ -195,6 +220,60 @@ Your working directory, branch and uncommitted changes are never touched. If a c
 - Codex: `csm` reads the account's limits from the app-server once a minute, and once more when Codex exits. Detection can lag by up to a minute.
 - Gemini CLI and Copilot CLI: no signal is available. Switch by hand with `csm next`.
 
+## Account intelligence
+
+`csm` keeps a provider-neutral health record for every account and uses it to pick where a switch goes. Nothing in it is secret: timestamps, a failure classification and the figures the agent itself reported.
+
+### What is tracked
+
+| Field | Set when |
+| --- | --- |
+| last used | the agent is started under the account |
+| last success | the agent exits without reporting an error |
+| last failure and its reason | the agent reports a usage limit, rate limit, authentication error or server error |
+| failures in the last 24 hours | each of those, capped at 20 entries |
+| cooldown | a usage limit; one hour |
+| usage | the agent reports it: the Claude Code status line during a session, a live `csm usage` check, or Codex's app-server once a minute |
+
+The agent's messages are never stored, only the classification (`usage_limit`, `rate_limited`, `authentication`, `network`, `unknown`).
+
+### How a switch chooses
+
+Candidates are the agent's enabled, logged-in accounts that are not in cooldown. They are ordered by:
+
+1. health: `healthy`, then `unknown`, then `warning`
+2. fewer failures in the last 24 hours
+3. your priority (`csm account priority`, also the order `csm accounts` shows)
+
+The order is deterministic; `csm auto status` prints it:
+
+```
+Failover: automatic (switch on a usage limit)
+Priority (Claude Code): work → personal → backup
+Would switch to (Claude Code): work → backup → personal
+```
+
+`csm next` follows your priority order exactly, so a manual switch always does what you expect. Automatic failover uses the health-aware order above.
+
+### Policies
+
+| `csm auto …` | On a usage limit |
+| --- | --- |
+| `automatic` | checkpoint, switch to the best account, resume |
+| `manual` | report it and, in a terminal, offer the switch |
+| `disabled` | report it and stop |
+
+The policy lives in `~/.csm/config.json` as `failover_policy`; older files with only `auto_failover` keep working.
+
+### Detection
+
+| Agent | Signal |
+| --- | --- |
+| Claude Code | the `StopFailure` hook payload: `rate_limit` with usage wording is a usage limit, `authentication_failed` and friends are authentication, `overloaded` and `server_error` are network; the status line also reports the 5-hour and 7-day windows |
+| Codex | `account/rateLimits/read` from the app-server once a minute and at exit; a `rateLimitReachedType` without credits is a usage limit |
+| Gemini CLI, Copilot CLI | no signal outside a session; switch by hand with `csm next` |
+
+Where an agent gives no signal, `csm` says so rather than guessing.
 ## Cross-agent handoff
 
 `csm` does not try to make Claude Code's conversation readable by Codex, or any agent's by another. Instead it writes a provider-neutral **task handoff**: what was asked, what the agent did, which files it touched, the exact repository state and the MCP verdicts, and gives that to the next agent as its opening instruction. The new agent reads it, checks the repository, and continues.
@@ -375,7 +454,7 @@ That message appears when a configuration refers to `${GITHUB_TOKEN}` and the va
 - `csm` does not read, copy or store tokens, cookies or Keychain secrets. Logging in is always the agent's own login flow.
 - MCP snapshots and handoff reports hold names, never values. Between two profiles of the same agent a server's definition is copied as it is; between different agents only the shape of the server moves and you add the credentials yourself.
 - Task handoffs never include tool output, and everything they do include is redacted for tokens, bearer headers, passwords in URLs and secret-looking assignments before it is written. The stored diff is your own working tree, kept under `~/.csm` with mode `0600` and never placed in a prompt.
-- `accounts.json` holds names, paths, timestamps and the account email or username.
+- `accounts.json` holds names, paths, timestamps, the account email or username, and the health history above: when the account last worked or failed and the failure's classification. Never the agent's output.
 - `~/.csm` is created with mode `0700`, files with `0600`.
 - `csm` refuses to run when an environment variable would override the profile's login:
 
@@ -411,6 +490,8 @@ That message appears when a configuration refers to `${GITHUB_TOKEN}` and the va
 
 | Message | What to do |
 | --- | --- |
+| "Failover is disabled" | Run `csm auto automatic`, or switch by hand with `csm next`. |
+| an account shows `unknown` health | Its last run ended with an error that was not a usage limit. `csm account health <name>` shows when; it clears on the next clean run. |
 | "a brand-new profile directory already reports a logged-in account" | The agent shares credentials across profiles. Upgrade the agent. |
 | "identifies as X, but it was set up as Y" | The profile's login changed. Run `csm account login <name>`. |
 | "Previous switch did not complete" | Run the agent command again in that project to resume the switch. |

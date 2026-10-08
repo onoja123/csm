@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -341,8 +342,8 @@ func cmdStatus(log *Logger, home string) error {
 		log.Blank()
 	}
 
-	log.Info("Auto failover")
-	log.Info("  %s\n", onOff(s.Config.AutoFailover, "enabled", "disabled"))
+	log.Info("Failover")
+	log.Info("  %s\n", describePolicy(s.Config.policy()))
 
 	log.Info("Current session")
 	running := false
@@ -396,39 +397,25 @@ func cmdStatus(log *Logger, home string) error {
 	return nil
 }
 
-func onOff(b bool, on, off string) string {
-	if b {
-		return on
-	}
-
-	return off
-}
-
 func printAccounts(log *Logger, s *State, providerID string, now time.Time) {
-	for _, name := range s.accountNames(providerID) {
+	for i, name := range s.accountNames(providerID) {
 		a, err := s.resolveAccount(name)
 		if err != nil {
 			continue
 		}
 
-		marker, active := "○", ""
+		marker := "○"
 		if name == s.active(providerID) {
-			marker, active = "●", "active, "
+			marker = "●"
 		}
 
-		detail := string(a.status(now))
+		health := string(s.accountHealth(a, now))
 
 		if a.status(now) == statusCooldown {
-			detail += " until " + a.CooldownUntil.Local().Format("15:04")
+			health += " until " + a.CooldownUntil.Local().Format("15:04")
 		}
 
-		if rec, ok := s.loadUsage(name); ok {
-			if summary := shortUsage(rec.Usage, now); summary != "" {
-				detail += "  (" + summary + ")"
-			}
-		}
-
-		log.Info("  %s %-12s %s%s", marker, name, active, detail)
+		log.Info("  %s %-12s %-24s %-18s priority %d", marker, name, health, s.usageLabel(name, now), i+1)
 	}
 }
 
@@ -501,7 +488,7 @@ func cmdAccounts(log *Logger, home string) error {
 
 func cmdAccount(log *Logger, home string, args []string) error {
 	if len(args) < 2 {
-		return errors.New("usage: csm account add|login|remove|enable|disable <name>")
+		return errors.New("usage: csm account add|login|remove|enable|disable|health|priority <name>")
 	}
 
 	s, err := loadState(home)
@@ -568,6 +555,30 @@ func cmdAccount(log *Logger, home string, args []string) error {
 		}
 
 		log.Success("Removed %s\n\nIts profile directory was kept:\n    %s\n\nTo sign it out and delete it:\n\n    %s\n    rm -rf %s", name, displayPath(dir), p.LogoutCommand(dir), dir)
+
+		return nil
+
+	case "health":
+		return cmdAccountHealth(log, s, name)
+
+	case "priority":
+		if len(args) != 3 {
+			return errors.New("usage: csm account priority <name> <position>")
+		}
+
+		position, err := strconv.Atoi(args[2])
+		if err != nil {
+			return fmt.Errorf("priority must be a number, got %q", args[2])
+		}
+
+		err = s.update(func(state *State) error { return state.setPriority(name, position) })
+		if err != nil {
+			return err
+		}
+
+		a, _ := s.resolveAccount(name)
+		log.Success("%s is now priority %d for %s", name, position, providerName(a.providerID()))
+		log.Info("Order: %s", strings.Join(s.accountNames(a.providerID()), " → "))
 
 		return nil
 
@@ -855,30 +866,25 @@ func cmdAuto(log *Logger, home string, args []string) error {
 	}
 
 	if len(args) != 1 {
-		return errors.New("usage: csm auto on|off|status")
+		return errBadPolicy
 	}
 
-	switch args[0] {
-	case "on", "off":
-		err := s.update(func(state *State) error {
-			state.Config.AutoFailover = args[0] == "on"
-
-			return nil
-		})
+	if args[0] != "status" {
+		err := s.update(func(state *State) error { return state.Config.setPolicy(args[0]) })
 		if err != nil {
 			return err
 		}
-
-	case "status":
-
-	default:
-		return errors.New("usage: csm auto on|off|status")
 	}
 
-	log.Info("Automatic failover: %s", onOff(s.Config.AutoFailover, "ON", "OFF"))
+	log.Info("Failover: %s", describePolicy(s.Config.policy()))
+	now := time.Now()
 
 	for _, id := range s.providersInUse() {
-		log.Info("Order (%s): %s", providerName(id), strings.Join(s.accountNames(id), " → "))
+		log.Info("Priority (%s): %s", providerName(id), strings.Join(s.accountNames(id), " → "))
+
+		if ranked := s.rankAccounts(id, nil, now); len(ranked) > 0 {
+			log.Info("Would switch to (%s): %s", providerName(id), joinNames(ranked))
+		}
 	}
 
 	return nil

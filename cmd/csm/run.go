@@ -129,8 +129,8 @@ func (r *runner) run(userArgs []string) (int, *nextRun, error) {
 		if res.switchTo == "" {
 			r.report(acct, res)
 
-			if res.reason == provider.StopReasonUsageLimit && !res.noneLeft && r.interactive {
-				next, err := r.state.nextAccount(r.provider.ID(), acct.Name, r.unavailable, time.Now())
+			if res.reason == provider.StopReasonUsageLimit && !res.noneLeft && r.interactive && r.state.Config.policy() == policyManual {
+				next, err := r.state.bestAccount(r.provider.ID(), acct.Name, r.unavailable, time.Now())
 				if err == nil && r.confirm(fmt.Sprintf("Switch to %s and resume this session? [Y/n] ", next.Name)) {
 					args, sessionID, err = r.switchAccount(acct, next.Name, res)
 					if err != nil {
@@ -301,6 +301,12 @@ wait:
 		}
 	}
 
+	if res.failure.Error == "" && (res.reason == provider.StopReasonProcessExited || res.reason == provider.StopReasonUserInterrupted || res.reason == provider.StopReasonManualSwitch) {
+		if err := r.state.recordAccountSuccess(acct.Name, time.Now()); err != nil {
+			slog.Debug("record success", "account", acct.Name, "err", err)
+		}
+	}
+
 	slog.Debug("agent exited", "account", acct.Name, "exit_code", res.exitCode, "reason", res.reason, "switch_to", res.switchTo)
 
 	return res, nil
@@ -367,6 +373,12 @@ func (r *runner) handleFailure(acct *Account, res *outcome, f provider.Failure, 
 
 	slog.Debug("agent reported failure", "account", acct.Name, "error", f.Error, "classification", f.Reason)
 
+	if f.Reason != provider.StopReasonUserInterrupted {
+		if err := r.state.recordAccountFailure(acct.Name, f.Reason, time.Now()); err != nil {
+			slog.Debug("record failure", "account", acct.Name, "err", err)
+		}
+	}
+
 	if res.reason != provider.StopReasonUsageLimit || res.switchTo != "" {
 		return
 	}
@@ -389,7 +401,7 @@ func (r *runner) handleFailure(acct *Account, res *outcome, f provider.Failure, 
 
 	r.unavailable[acct.Name] = true
 
-	if !r.state.Config.AutoFailover {
+	if r.state.Config.policy() != policyAutomatic {
 		res.autoDisabled = true
 
 		return
@@ -399,7 +411,7 @@ func (r *runner) handleFailure(acct *Account, res *outcome, f provider.Failure, 
 		return
 	}
 
-	next, err := r.state.nextAccount(r.provider.ID(), acct.Name, r.unavailable, time.Now())
+	next, err := r.state.bestAccount(r.provider.ID(), acct.Name, r.unavailable, time.Now())
 	if err != nil {
 		res.noneLeft = true
 
@@ -602,7 +614,7 @@ func (r *runner) recoverTransition() (*recovery, error) {
 
 	r.log.Info("Previous switch did not complete: %s → %s\n", t.From, t.To)
 
-	if !r.state.Config.AutoFailover && !r.confirm("Resume the handoff? [Y/n] ") {
+	if r.state.Config.policy() != policyAutomatic && !r.confirm("Resume the handoff? [Y/n] ") {
 		os.Remove(filepath.Join(r.stateDir, transitionFile))
 
 		return nil, nil
@@ -661,8 +673,10 @@ func (r *runner) report(acct *Account, res outcome) {
 		switch {
 		case res.noneLeft:
 			r.log.Info("All configured accounts are currently unavailable. Automatic failover paused.")
+		case res.autoDisabled && r.state.Config.policy() == policyDisabled:
+			r.log.Info("Failover is disabled (enable with: csm auto automatic).")
 		case res.autoDisabled:
-			r.log.Info("Automatic failover is off (enable with: csm auto on).")
+			r.log.Info("Automatic failover is off (enable with: csm auto automatic).")
 		}
 
 	case provider.StopReasonUnknown:
