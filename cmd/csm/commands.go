@@ -216,6 +216,10 @@ func cmdDoctor(log *Logger, home string) error {
 			seen[identity] = a.Name
 			log.Check(label+" ("+st.Email+")", true)
 		}
+
+		if cwd, err := os.Getwd(); err == nil {
+			doctorMCP(log, s, usable, cwd, fail)
+		}
 	}
 
 	if isTerminal(os.Stdin.Fd()) {
