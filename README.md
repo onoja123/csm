@@ -128,6 +128,15 @@ With auto failover on, `csm` switches to the next ready account when the running
 
 `csm` only switches on a known usage limit. A plain rate limit, an authentication error, or a server error is reported and nothing is switched.
 
+### Handing a task to another agent
+
+```bash
+csm handoff <account|number>      # move the current task to that account, even of another agent
+csm handoff --provider codex      # to that agent's active account
+```
+
+With a `csm` session running in this project, the running session checkpoints, stops its agent, and starts the target agent in the same terminal and directory. Without one, `csm handoff` starts the target here from the last checkpoint. See [Cross-agent handoff](#cross-agent-handoff).
+
 ### MCP servers
 
 ```bash
@@ -185,6 +194,100 @@ Your working directory, branch and uncommitted changes are never touched. If a c
 - Claude Code: a `StopFailure` hook, registered for the launch with `--settings`. Your settings files are not modified.
 - Codex: `csm` reads the account's limits from the app-server once a minute, and once more when Codex exits. Detection can lag by up to a minute.
 - Gemini CLI and Copilot CLI: no signal is available. Switch by hand with `csm next`.
+
+## Cross-agent handoff
+
+`csm` does not try to make Claude Code's conversation readable by Codex, or any agent's by another. Instead it writes a provider-neutral **task handoff**: what was asked, what the agent did, which files it touched, the exact repository state and the MCP verdicts, and gives that to the next agent as its opening instruction. The new agent reads it, checks the repository, and continues.
+
+```
+$ csm handoff work-codex
+CSM handoff
+
+Current agent                                Claude Code / personal
+Target agent                                 Codex / work-codex
+Session                                      974c0410-e320-44aa-bf5b-cd6e04a53e22
+Task context                                 captured at the switch
+Git state                                    captured at the switch
+
+Continue with Codex? [Y/n]
+```
+
+and in the terminal running the session:
+
+```
+Code Session Manager
+
+Switching personal (Claude Code) → work-codex (Codex).
+
+  Saving checkpoint                  ✓
+  Stopping Claude Code               ✓
+  Selecting work-codex               ✓
+  Capturing task context             ✓
+  Capturing git state                ✓
+  Carrying MCP configuration         ✓
+  Saving handoff                     ✓
+  Handing the task to Codex          ✓
+  Starting Codex as work-codex       ✓
+
+Codex cannot read a Claude Code conversation. It starts with a task handoff instead:
+
+    ~/.csm/handoffs/my-project-3f2a9c1b7e04/20261008T110102Z-claude-codex/handoff.md
+
+MCP handoff:
+  ✓ filesystem
+  ✓ github reads GITHUB_TOKEN from the environment
+  ⚠ linear requires authentication: may need a login in work-codex
+```
+
+### What the handoff contains
+
+Each handoff is a directory under `~/.csm/handoffs/<project>/<id>/`, mode `0700`, files `0600`:
+
+| File | Contents |
+| --- | --- |
+| `handoff.md` | the summary the agent reads: current task, earlier requests, last progress note, files modified/created/read, commands run, decisions, git state, MCP verdicts, next steps |
+| `handoff.json` | the same, structured and versioned (`"version": 1`), plus the lifecycle stage |
+| `git-status.txt` | full `git status --short` |
+| `diff.patch` | `git diff HEAD`, up to 1 MB; referenced from the summary, never put in a prompt |
+
+The task context comes from the agent's own session records, read deterministically, no model involved:
+
+| Agent | Read from | Extracted |
+| --- | --- | --- |
+| Claude Code | the session transcript csm already locates for `--resume` | user prompts, assistant text, files from `Read`/`Edit`/`Write` calls, `Bash` commands, "next steps" lists, sentences announcing a decision |
+| Codex | the rollout file the app-server reports | user and assistant messages, shell calls |
+| Gemini CLI | the session file under `.gemini/tmp` | user and model messages |
+| Copilot CLI | `events.jsonl` in the session folder | user and assistant messages, tool calls |
+
+Tool *output* is never read: it is untrusted and the usual place for secrets. Everything kept is run through a redactor (tokens, bearer headers, URLs with passwords, `NAME=value` with a secret-looking name) and bounded: the last six requests, one progress note, forty files, fifteen commands. The repository is the source of truth; the handoff tells the agent where to look.
+
+The Claude Code format was verified against a real transcript. The Codex, Gemini CLI and Copilot CLI readers follow their documented session shapes and degrade to "repository state only" when a file does not match.
+
+### How each agent receives it
+
+| Agent | Mechanism |
+| --- | --- |
+| Claude Code | `--append-system-prompt`, alongside `--resume` when the session itself is carried |
+| Codex | the positional prompt, also after `codex resume <id>` |
+| Gemini CLI | `--prompt-interactive` |
+| Copilot CLI | `--interactive <prompt>` |
+
+All four were checked against the installed CLIs' help. If an installed version lacks the flag, `csm` still writes the handoff and prints the path to read.
+
+### Same agent, different account
+
+`csm next`, `csm use` and automatic failover run through the same engine. When the agent can resume its own session (all four can), the conversation is carried as before and the handoff is written as a safety copy; the opening note just says which account the session moved from. When it cannot, the new session starts with the full handoff instruction.
+
+### Lifecycle and recovery
+
+`handoff.json` records the stage: `checkpointed`, `context_extracted`, `mcp_prepared`, `target_started`. Handoffs are kept; `csm status` shows the latest one for the project. If `csm` dies between stopping one agent and starting the other, the transition is recorded under the target agent, and `csm <agent>` in that project offers to finish it.
+
+### Limitations
+
+- The conversation does not move between agents. The new agent knows the task, the files and the repository state, not the previous model's reasoning; it re-reads what it needs.
+- The handoff is only as good as the session records. A session with no user prompts yields repository state only.
+- Decisions and next steps are found by pattern, not understanding: a "Next steps" heading followed by a list, sentences beginning "I'll" or "instead of". Absent those, the sections fall back to generic guidance.
+- Nothing here resets, stashes, cleans or checks out anything in your repository.
 
 ## MCP failover
 
@@ -271,6 +374,7 @@ That message appears when a configuration refers to `${GITHUB_TOKEN}` and the va
 
 - `csm` does not read, copy or store tokens, cookies or Keychain secrets. Logging in is always the agent's own login flow.
 - MCP snapshots and handoff reports hold names, never values. Between two profiles of the same agent a server's definition is copied as it is; between different agents only the shape of the server moves and you add the credentials yourself.
+- Task handoffs never include tool output, and everything they do include is redacted for tokens, bearer headers, passwords in URLs and secret-looking assignments before it is written. The stored diff is your own working tree, kept under `~/.csm` with mode `0600` and never placed in a prompt.
 - `accounts.json` holds names, paths, timestamps and the account email or username.
 - `~/.csm` is created with mode `0700`, files with `0600`.
 - `csm` refuses to run when an environment variable would override the profile's login:
@@ -311,6 +415,8 @@ That message appears when a configuration refers to `${GITHUB_TOKEN}` and the va
 | "identifies as X, but it was set up as Y" | The profile's login changed. Run `csm account login <name>`. |
 | "Previous switch did not complete" | Run the agent command again in that project to resume the switch. |
 | "... is set in your environment" | Unset the variable named in the message. |
+| "This … version cannot take an opening instruction" | The agent started without the handoff. Ask it to read the `handoff.md` path printed above. |
+| the new agent asks what you were working on | The handoff had no task context (no session was recorded). Tell it; the repository state was still captured. |
 
 `csm doctor` reports most problems with a reason and a next step.
 
@@ -325,10 +431,13 @@ go test -race ./...
 The tests do not need a real agent. Each agent has a fake that runs through the `csm` binary. CI runs the suite on macOS and Ubuntu.
 
 ```
-cmd/csm/              the CLI: commands, state, runner, logger, MCP handoff
-internal/provider/    one file per agent, plus its fake and its MCP adapter
+cmd/csm/              the CLI: commands, state, runner, logger, MCP and task handoff
+internal/provider/    one file per agent, plus its fake, its MCP adapter and its session reader
 internal/mcp/         portable MCP server description, snapshot and handoff report
+internal/handoff/     provider-neutral task handoff: context, git state, rendering, storage
 ```
+
+To take part in task handoff, a provider implements `SessionContext` (read its own session into a `handoff.Context`) and `HandoffArgs` (pass the opening instruction).
 
 To give an agent MCP handoff, implement `mcp.Adapter` (parse, validate, prepare) next to its provider and expose it with an `MCP()` method.
 
