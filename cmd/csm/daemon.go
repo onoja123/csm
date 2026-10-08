@@ -1706,10 +1706,20 @@ func (d *daemon) noteCheckpoint(cp Checkpoint) {
 	d.log.add(a)
 }
 
+// noteHandoff reads the switch from the handoff package itself, since the transition file is gone within a poll interval.
 func (d *daemon) noteHandoff(st handoff.State, isNew bool) {
 	a := Activity{Kind: "handoff." + st.Stage, Provider: st.Target.Provider, Account: st.Target.Account, Refs: map[string]string{"handoff_id": st.ID}}
+	sameAgent := st.Source.Provider == st.Target.Provider && st.Source.Account != ""
 
 	switch {
+	case st.Stage == handoff.StageTargetStarted && sameAgent:
+		a.Kind = "switch"
+		a.Title = "CSM switched " + st.Source.Account + " → " + st.Target.Account
+		a.Detail = provider.StopReason(st.Reason).Describe()
+
+		if st.Git.Root != "" {
+			a.Detail += " · " + displayPath(st.Git.Root)
+		}
 	case st.Stage == handoff.StageTargetStarted:
 		a.Title = "Handoff completed: " + st.Source.String() + " → " + st.Target.String()
 	case st.Stage == handoff.StageFailed:
