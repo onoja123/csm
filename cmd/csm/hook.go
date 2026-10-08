@@ -2,8 +2,12 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -47,6 +51,45 @@ func runHook(event string, stdin io.Reader) {
 		if writeJSON(filepath.Join(stateDir, eventFile), f) == nil {
 			syscall.Kill(pid, syscall.SIGUSR1)
 		}
+
+	case "pre-tool-use":
+		runPreToolUse(stateDir, pid, data)
+	}
+}
+
+// runPreToolUse asks the csm service whether the desktop wants to decide this tool call. Without a service, or when it declines, the agent asks the user itself.
+func runPreToolUse(stateDir string, pid int, data []byte) {
+	socket := os.Getenv("CSM_SOCKET")
+	if socket == "" {
+		return
+	}
+
+	body, err := json.Marshal(hookRequest{CSMPID: pid, Account: os.Getenv("CSM_ACCOUNT"), StateDir: stateDir, Payload: json.RawMessage(data)})
+	if err != nil {
+		return
+	}
+
+	client := &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "unix", socket)
+	}}}
+	resp, err := client.Post("http://csm/v1/hooks/pre-tool-use", "application/json", bytes.NewReader(body))
+
+	if err != nil {
+		return
+	}
+
+	defer resp.Body.Close()
+
+	var out struct {
+		Decision string `json:"decision"`
+	}
+
+	if json.NewDecoder(resp.Body).Decode(&out) != nil {
+		return
+	}
+
+	if reply := hookResponse(out.Decision); reply != nil {
+		os.Stdout.Write(reply)
 	}
 }
 

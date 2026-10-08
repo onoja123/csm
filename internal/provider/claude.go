@@ -113,10 +113,12 @@ func (c Claude) Login(profileDir string) error {
 type HookCommand struct {
 	Type    string `json:"type"`
 	Command string `json:"command"`
+	Timeout int    `json:"timeout,omitempty"`
 }
 
 type HookGroup struct {
-	Hooks []HookCommand `json:"hooks"`
+	Matcher string        `json:"matcher,omitempty"`
+	Hooks   []HookCommand `json:"hooks"`
 }
 
 type StatusLine struct {
@@ -138,6 +140,12 @@ func (c Claude) LaunchArgs(csmPath string) []string {
 		},
 		StatusLine: StatusLine{Type: "command", Command: quoted + " hook status-line"},
 	}
+
+	// Under the csm service, shell commands can be approved from the desktop; the hook waits on the service and stays silent when nobody is there to decide.
+	if os.Getenv("CSM_SOCKET") != "" {
+		s.Hooks["PreToolUse"] = []HookGroup{{Matcher: "Bash", Hooks: []HookCommand{{Type: "command", Command: quoted + " hook pre-tool-use", Timeout: 660}}}}
+	}
+
 	data, _ := json.Marshal(s)
 
 	return []string{"--settings", string(data)}

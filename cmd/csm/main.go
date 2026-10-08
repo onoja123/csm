@@ -46,6 +46,7 @@ Commands:
   handoff <account>        Move the current task to another account, even of another agent
                            (--provider codex|gemini|copilot|claude for that agent's active account)
   test failover [codex]    Simulate a failover with a fake agent (no real usage)
+  serve [--detach]         Run the local service the CSM desktop app connects to (stop|status)
   version                  Print version information`
 
 // version is overridden at build time with -ldflags "-X main.version=...".
@@ -162,6 +163,9 @@ func run(args []string) int {
 
 	case "handoff":
 		code, err = cmdHandoff(log, home, rest)
+
+	case "serve":
+		err = cmdServe(log, home, rest)
 
 	case "test":
 		providerID := provider.ClaudeID

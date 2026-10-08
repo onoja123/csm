@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -223,7 +224,7 @@ func (s *State) latestCheckpoint(projectDir string) (Checkpoint, bool) {
 }
 
 func handoffUsage() error {
-	return errors.New("usage: csm handoff <account|number> | csm handoff --provider " + strings.Join(provider.IDs, "|"))
+	return errors.New("usage: csm handoff [--yes] <account|number> | csm handoff [--yes] --provider " + strings.Join(provider.IDs, "|"))
 }
 
 func cmdHandoff(log *Logger, home string, args []string) (int, error) {
@@ -233,6 +234,17 @@ func cmdHandoff(log *Logger, home string, args []string) (int, error) {
 	}
 
 	var target *Account
+
+	yes := false
+	args = slices.DeleteFunc(slices.Clone(args), func(a string) bool {
+		if a == "--yes" || a == "-y" {
+			yes = true
+
+			return true
+		}
+
+		return false
+	})
 
 	switch {
 	case len(args) == 2 && args[0] == "--provider":
@@ -280,7 +292,7 @@ func cmdHandoff(log *Logger, home string, args []string) (int, error) {
 	}
 
 	proj := detectProject(cwd)
-	interactive := isTerminal(os.Stdin.Fd())
+	interactive := isTerminal(os.Stdin.Fd()) && !yes
 	sess, live, err := findManagedSession(s, "")
 
 	if err != nil {
