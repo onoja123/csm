@@ -16,6 +16,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/onoja123/csm/internal/handoff"
+	"github.com/onoja123/csm/internal/mcp"
 	"github.com/onoja123/csm/internal/provider"
 )
 
@@ -56,6 +58,7 @@ type outcome struct {
 	reason       provider.StopReason
 	failure      provider.Failure
 	switchTo     string
+	crossTo      string
 	sessionID    string
 	noneLeft     bool
 	autoDisabled bool
@@ -71,9 +74,10 @@ func (r *runner) step(label string, ok bool) {
 	r.log.Info("  %-34s %s", label, mark)
 }
 
-func (r *runner) run(userArgs []string) (int, error) {
+// run drives one agent until it exits for good, or until a switch to another agent asks cmdRun to start a new runner.
+func (r *runner) run(userArgs []string) (int, *nextRun, error) {
 	if sess, live := r.state.loadLiveSession(r.provider.ID(), r.project.Dir); live {
-		return 1, fmt.Errorf("csm is already managing %s for this project (csm pid %d, account %s).\n\nSwitch it with `csm use <name>` or `csm next`, or stop that session first.", r.provider.Name(), sess.CSMPID, sess.Account)
+		return 1, nil, fmt.Errorf("csm is already managing %s for this project (csm pid %d, account %s).\n\nSwitch it with `csm use <name>` or `csm next`, or stop that session first.", r.provider.Name(), sess.CSMPID, sess.Account)
 	}
 
 	sigs := make(chan os.Signal, 8)
@@ -91,7 +95,7 @@ func (r *runner) run(userArgs []string) (int, error) {
 
 	recovered, err := r.recoverTransition()
 	if err != nil {
-		return 1, err
+		return 1, nil, err
 	}
 
 	if recovered != nil {
@@ -101,16 +105,25 @@ func (r *runner) run(userArgs []string) (int, error) {
 	for {
 		acct, err := r.state.resolveAccount(r.state.active(r.provider.ID()))
 		if err != nil {
-			return 1, fmt.Errorf("no active %s account; add one with: csm account add <name> --provider %s", r.provider.Name(), r.provider.ID())
+			return 1, nil, fmt.Errorf("no active %s account; add one with: csm account add <name> --provider %s", r.provider.Name(), r.provider.ID())
 		}
 
 		if _, err := verifyProfile(r.provider, acct); err != nil {
-			return 1, fmt.Errorf("cannot start %s as %s.\n\n%w", r.provider.Name(), acct.Name, err)
+			return 1, nil, fmt.Errorf("cannot start %s as %s.\n\n%w", r.provider.Name(), acct.Name, err)
 		}
 
 		res, err := r.launch(acct, args, sessionID, sigs)
 		if err != nil {
-			return 1, err
+			return 1, nil, err
+		}
+
+		if res.crossTo != "" {
+			next, err := r.crossSwitch(acct, res)
+			if err != nil {
+				return 1, nil, err
+			}
+
+			return 0, next, nil
 		}
 
 		if res.switchTo == "" {
@@ -121,19 +134,19 @@ func (r *runner) run(userArgs []string) (int, error) {
 				if err == nil && r.confirm(fmt.Sprintf("Switch to %s and resume this session? [Y/n] ", next.Name)) {
 					args, sessionID, err = r.switchAccount(acct, next.Name, res)
 					if err != nil {
-						return 1, err
+						return 1, nil, err
 					}
 
 					continue
 				}
 			}
 
-			return res.exitCode, nil
+			return res.exitCode, nil, nil
 		}
 
 		args, sessionID, err = r.switchAccount(acct, res.switchTo, res)
 		if err != nil {
-			return 1, err
+			return 1, nil, err
 		}
 	}
 }
@@ -419,12 +432,28 @@ func (r *runner) handleSwitchRequest(acct *Account, res *outcome, stop func()) {
 	}
 
 	*r.state = *fresh
+	target, err := r.state.resolveAccount(req.To)
 
-	if _, err := r.state.resolveAccount(req.To); err != nil {
+	if err != nil {
 		return
 	}
 
 	res.reason = provider.StopReasonManualSwitch
+
+	if target.providerID() != r.provider.ID() {
+		if _, err := provider.Find(target.providerID()); err != nil {
+			slog.Debug("cross-agent switch refused", "to", req.To, "err", err)
+
+			return
+		}
+
+		res.crossTo = req.To
+		r.beginSwitch(acct, req.To, res)
+		stop()
+
+		return
+	}
+
 	res.switchTo = req.To
 	r.beginSwitch(acct, req.To, res)
 	stop()
@@ -453,8 +482,15 @@ func (r *runner) beginSwitch(from *Account, to string, res *outcome) {
 	r.snapshotMCP(from)
 
 	t := Transition{Version: stateVersion, Provider: r.provider.ID(), ProjectDir: r.project.Dir, From: from.Name, To: to, SessionID: res.sessionID, Reason: res.reason, CSMPID: os.Getpid(), StartedAt: now}
+	transitionDir := r.stateDir
 
-	if err := writeJSON(filepath.Join(r.stateDir, transitionFile), t); err != nil {
+	if target, err := r.state.resolveAccount(to); err == nil && target.providerID() != r.provider.ID() {
+		t.Provider = target.providerID()
+		transitionDir = r.state.projectStateDir(t.Provider, r.project.Dir)
+		os.MkdirAll(transitionDir, 0o700)
+	}
+
+	if err := writeJSON(filepath.Join(transitionDir, transitionFile), t); err != nil {
 		slog.Debug("save transition", "err", err)
 	}
 }
@@ -493,31 +529,43 @@ func (r *runner) switchAccount(from *Account, to string, res outcome) ([]string,
 	}
 
 	r.step("Selecting "+to, true)
-	rep := r.handoffMCP(from, target)
-	args, sessionID, resumed := r.handoffArgs(from, target, res.sessionID, rep.Summary())
+	args, sessionID, resumed, st := r.handoffArgs(from, target, res.sessionID, res.reason)
 	r.printRestore(to, resumed)
-	r.printMCP(rep)
+	r.printMCP(mcp.Report{Results: st.MCP})
 
 	return args, sessionID, nil
 }
 
-func (r *runner) handoffArgs(from, to *Account, sessionID, mcpNote string) (args []string, sessionIDOut string, resumed bool) {
-	if sessionID != "" && r.features.CanContinue() {
+// handoffArgs carries the native session when the agent can resume it, builds the handoff package either way, and adds the agent's way of receiving the instruction.
+func (r *runner) handoffArgs(from, to *Account, sessionID string, reason provider.StopReason) (args []string, sessionIDOut string, resumed bool, st *handoff.State) {
+	source := r.provider
+
+	if from.providerID() != r.provider.ID() {
+		source, _ = provider.New(from.providerID(), "")
+	}
+
+	if sessionID != "" && r.features.CanContinue() && source.ID() == r.provider.ID() {
 		resumeArgs, newSessionID, err := r.provider.CarrySession(from.ConfigDir, to.ConfigDir, sessionID)
 		if err != nil {
 			slog.Debug("carry session", "err", err)
 		}
 
 		if len(resumeArgs) > 0 {
-			return resumeArgs, newSessionID, true
+			args, sessionIDOut, resumed = resumeArgs, newSessionID, true
 		}
 	}
 
-	if r.features.SessionID {
+	if !resumed && r.features.SessionID {
 		sessionIDOut = provider.NewSessionID()
+		args = r.provider.NewSessionArgs(r.features, sessionIDOut, "")
 	}
 
-	return r.provider.NewSessionArgs(r.features, sessionIDOut, r.handoffNote(from.Name, mcpNote)), sessionIDOut, false
+	target := handoffTarget{provider: r.provider, features: r.features, account: to}
+	st, dir := r.buildHandoff(source, from, sessionID, reason, target, resumed)
+	args = append(args, injectionArgs(target, st, dir)...)
+	markStarted(st, dir)
+
+	return args, sessionIDOut, resumed, st
 }
 
 func (r *runner) printRestore(to string, resumed bool) {
@@ -533,30 +581,11 @@ func (r *runner) printRestore(to string, resumed bool) {
 
 	if resumed {
 		r.log.Info("The request that hit the limit was not retried; send it again or type \"continue\".")
-	} else if r.features.SystemPrompt {
-		r.log.Info("The conversation could not be carried over. Starting a new %s session\nin the same project with a handoff note.", r.provider.Name())
 	} else {
-		r.log.Info("The conversation could not be carried over. Starting a new %s session\nin the same project.", r.provider.Name())
+		r.log.Info("The conversation could not be carried over. Starting a new %s session\nin the same project with a task handoff.", r.provider.Name())
 	}
 
 	r.log.Blank()
-}
-
-func (r *runner) handoffNote(fromAccount, mcpNote string) string {
-	var b strings.Builder
-
-	fmt.Fprintf(&b, "This session continues work that was in progress in a previous %s session (account %q) in this directory. ", r.provider.Name(), fromAccount)
-	b.WriteString("That conversation could not be transferred, so ask the user what they were working on if it is unclear. ")
-
-	if mcpNote != "" {
-		b.WriteString(mcpNote + " ")
-	}
-
-	if status := gitStatusShort(r.project.Dir); status != "" {
-		fmt.Fprintf(&b, "Current git status:\n%s", status)
-	}
-
-	return b.String()
 }
 
 type recovery struct {
@@ -614,10 +643,9 @@ func (r *runner) recoverTransition() (*recovery, error) {
 		return nil, err
 	}
 
-	rep := r.handoffMCP(from, to)
-	args, sessionID, resumed := r.handoffArgs(from, to, t.SessionID, rep.Summary())
+	args, sessionID, resumed, st := r.handoffArgs(from, to, t.SessionID, t.Reason)
 	r.printRestore(to.Name, resumed)
-	r.printMCP(rep)
+	r.printMCP(mcp.Report{Results: st.MCP})
 
 	return &recovery{args: args, sessionID: sessionID}, nil
 }

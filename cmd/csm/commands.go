@@ -219,6 +219,7 @@ func cmdDoctor(log *Logger, home string) error {
 
 		if cwd, err := os.Getwd(); err == nil {
 			doctorMCP(log, s, usable, cwd, fail)
+			doctorHandoff(log, s, usable, cwd, fail)
 		}
 	}
 
@@ -372,6 +373,8 @@ func cmdStatus(log *Logger, home string) error {
 	if !saved {
 		log.Info("  none")
 	}
+
+	printLatestHandoff(log, s, proj.Dir, now)
 
 	for _, id := range provider.IDs {
 		t, ok, _ := s.loadTransition(id, proj.Dir)
@@ -887,36 +890,57 @@ func cmdRun(log *Logger, home, providerID string, args []string) (int, error) {
 		return 1, err
 	}
 
-	p, err := provider.Find(providerID)
-	if err != nil {
-		return 1, err
-	}
+	for {
+		r, err := newRunner(log, s, providerID)
+		if err != nil {
+			return 1, err
+		}
 
-	if len(s.accountNames(providerID)) == 0 {
-		return 1, fmt.Errorf("no %s accounts configured.\n\nRun:\n\n    csm account add <name> --provider %s", p.Name(), providerID)
-	}
+		code, next, err := r.run(args)
+		if err != nil || next == nil {
+			return code, err
+		}
 
-	if err := p.CheckEnv(); err != nil {
-		return 1, err
+		providerID, args = next.providerID, next.args
 	}
+}
 
-	features, err := p.Features()
-	if err != nil {
-		return 1, err
-	}
-
-	if !features.CanIsolate() {
-		return 1, errUnsupported(p)
-	}
-
+// newRunner checks that an agent is installed and usable and prepares to run it in the current directory.
+func newRunner(log *Logger, s *State, providerID string) (*runner, error) {
 	csmPath, err := os.Executable()
 	if err != nil {
-		return 1, err
+		return nil, err
 	}
 
 	cwd, err := os.Getwd()
 	if err != nil {
-		return 1, err
+		return nil, err
+	}
+
+	return newRunnerAt(log, s, providerID, csmPath, cwd)
+}
+
+func newRunnerAt(log *Logger, s *State, providerID, csmPath, cwd string) (*runner, error) {
+	p, err := provider.Find(providerID)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(s.accountNames(providerID)) == 0 {
+		return nil, fmt.Errorf("no %s accounts configured.\n\nRun:\n\n    csm account add <name> --provider %s", p.Name(), providerID)
+	}
+
+	if err := p.CheckEnv(); err != nil {
+		return nil, err
+	}
+
+	features, err := p.Features()
+	if err != nil {
+		return nil, err
+	}
+
+	if !features.CanIsolate() {
+		return nil, errUnsupported(p)
 	}
 
 	r := &runner{
@@ -935,8 +959,8 @@ func cmdRun(log *Logger, home, providerID string, args []string) (int, error) {
 	r.stateDir = s.projectStateDir(providerID, r.project.Dir)
 
 	if err := os.MkdirAll(r.stateDir, 0o700); err != nil {
-		return 1, err
+		return nil, err
 	}
 
-	return r.run(args)
+	return r, nil
 }

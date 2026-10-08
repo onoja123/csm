@@ -41,6 +41,8 @@ Commands:
   codex [args...]          Run Codex under the active Codex account
   gemini [args...]         Run Gemini CLI under the active Gemini CLI account
   copilot [args...]        Run GitHub Copilot CLI under the active Copilot account
+  handoff <account>        Move the current task to another account, even of another agent
+                           (--provider codex|gemini|copilot|claude for that agent's active account)
   test failover [codex]    Simulate a failover with a fake agent (no real usage)
   version                  Print version information`
 
@@ -155,6 +157,9 @@ func run(args []string) int {
 
 	case provider.ClaudeID, provider.CodexID, provider.GeminiID, provider.CopilotID:
 		code, err = cmdRun(log, home, cmd, rest)
+
+	case "handoff":
+		code, err = cmdHandoff(log, home, rest)
 
 	case "test":
 		providerID := provider.ClaudeID
