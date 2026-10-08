@@ -1059,7 +1059,7 @@ func (d *daemon) postRunStop(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rn.stop(stopGracePeriod)
-	d.log.add(Activity{Kind: "rn.stop", Provider: rn.Provider, Account: rn.Account, Title: "Stop requested for " + providerName(rn.Provider), RunID: rn.ID})
+	d.log.add(Activity{Kind: "run.stop", Provider: rn.Provider, Account: rn.Account, Title: "Stop requested for " + providerName(rn.Provider), RunID: rn.ID})
 	writeOK(w, nil)
 }
 

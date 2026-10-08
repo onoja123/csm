@@ -127,6 +127,21 @@ func (m *runManager) startHandoff(s *State, providerID, projectDir, targetAccoun
 	return m.spawn(s, runKindHandoff, providerID, dir, []string{"handoff", "--yes", targetAccount}, nil, cols, rows)
 }
 
+// childEnv drops markers an enclosing agent session leaves behind, so an agent started here is a fresh top-level session.
+func childEnv() []string {
+	var env []string
+
+	for _, kv := range os.Environ() {
+		if strings.HasPrefix(kv, "CLAUDE_CODE_") || strings.HasPrefix(kv, "CLAUDECODE=") || strings.HasPrefix(kv, "CSM_SOCKET=") || strings.HasPrefix(kv, "CSM_HOME=") {
+			continue
+		}
+
+		env = append(env, kv)
+	}
+
+	return env
+}
+
 func cleanProjectDir(dir string) (string, error) {
 	if dir == "" {
 		return "", errors.New("project_dir is required")
@@ -163,7 +178,7 @@ func (m *runManager) spawn(s *State, kind, providerID, dir string, csmArgs, user
 
 	cmd := exec.Command(m.csmPath, csmArgs...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "CSM_HOME="+m.home, "CSM_SOCKET="+m.socket, "TERM=xterm-256color", "COLORTERM=truecolor")
+	cmd.Env = append(childEnv(), "CSM_HOME="+m.home, "CSM_SOCKET="+m.socket, "TERM=xterm-256color", "COLORTERM=truecolor")
 
 	if cols <= 0 || rows <= 0 {
 		cols, rows = 120, 36
