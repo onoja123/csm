@@ -188,7 +188,9 @@ type Features struct {
 	Resume       bool
 	SessionID    bool
 	SystemPrompt bool
-	UsageProbe   bool
+	// InitialPrompt means the agent accepts an instruction to run at the start of an interactive session.
+	InitialPrompt bool
+	UsageProbe    bool
 }
 
 func (f Features) CanIsolate() bool { return f.Auth && f.Supervise }

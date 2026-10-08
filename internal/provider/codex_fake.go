@@ -28,7 +28,7 @@ func RunFakeCodex(args []string) int {
 		return 0
 
 	case len(args) > 0 && args[0] == "--help":
-		fmt.Println("Codex CLI\n\nUsage: codex [OPTIONS] [PROMPT]\n\nCommands:\n  login             Manage login\n  app-server        [experimental] Run the app server or related tooling\n  resume            Resume a previous interactive session\n\nOptions:\n      --no-daemon\n          Run without the shared background server")
+		fmt.Println("Codex CLI\n\nUsage: codex [OPTIONS] [PROMPT]\n\nArguments:\n  [PROMPT]  Optional user prompt to start the session\n\nCommands:\n  login             Manage login\n  app-server        [experimental] Run the app server or related tooling\n  resume            Resume a previous interactive session\n\nOptions:\n      --no-daemon\n          Run without the shared background server")
 
 		return 0
 
@@ -41,10 +41,10 @@ func RunFakeCodex(args []string) int {
 		return fakeCodexAppServer(home, authFile, limited)
 	}
 
-	sessionID, resume := NewSessionID(), false
+	sessionID, resume, prompt := NewSessionID(), false, strings.Join(args, " ")
 
 	if len(args) >= 2 && args[0] == "resume" {
-		sessionID, resume = args[1], true
+		sessionID, resume, prompt = args[1], true, strings.Join(args[2:], " ")
 	}
 
 	rollout := fakeCodexRollout(home, sessionID)
@@ -65,7 +65,7 @@ func RunFakeCodex(args []string) int {
 		return 1
 	}
 
-	fmt.Fprintf(f, "{\"id\":%q,\"cwd\":%q,\"profile\":%q,\"resumed\":%t}\n", sessionID, cwd, profile, resume)
+	fmt.Fprintf(f, "{\"id\":%q,\"cwd\":%q,\"profile\":%q,\"resumed\":%t,\"prompt\":%q}\n", sessionID, cwd, profile, resume, prompt)
 	f.Close()
 
 	term := make(chan os.Signal, 1)

@@ -22,7 +22,7 @@ func RunFakeCopilot(args []string) int {
 		return 0
 
 	case len(args) > 0 && args[0] == "--help":
-		fmt.Println("Usage: copilot [OPTIONS] [COMMAND]\n\nCommands:\n  login        Authenticate with Copilot\n\nOptions:\n  -r, --resume [<value>]\n      --session-id <id>")
+		fmt.Println("Usage: copilot [OPTIONS] [COMMAND]\n\nCommands:\n  login        Authenticate with Copilot\n\nOptions:\n  -i, --interactive <prompt>\n  -r, --resume [<value>]\n      --session-id <id>")
 
 		return 0
 
@@ -33,7 +33,7 @@ func RunFakeCopilot(args []string) int {
 		return 0
 	}
 
-	sessionID, resume := NewSessionID(), false
+	sessionID, resume, prompt := NewSessionID(), false, ""
 
 	for i := 0; i+1 < len(args); i++ {
 		switch args[i] {
@@ -41,6 +41,8 @@ func RunFakeCopilot(args []string) int {
 			sessionID = args[i+1]
 		case "--resume":
 			sessionID, resume = args[i+1], true
+		case "-i", "--interactive":
+			prompt = args[i+1]
 		}
 	}
 
@@ -63,7 +65,7 @@ func RunFakeCopilot(args []string) int {
 		return 1
 	}
 
-	fmt.Fprintf(f, "{\"profile\":%q,\"resumed\":%t}\n", profile, resume)
+	fmt.Fprintf(f, "{\"profile\":%q,\"resumed\":%t,\"prompt\":%q}\n", profile, resume, prompt)
 	f.Close()
 
 	if !slices.Contains(strings.Split(os.Getenv("CSM_FAKE_HOLD"), ","), profile) {

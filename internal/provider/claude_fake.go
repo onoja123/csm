@@ -54,12 +54,14 @@ func RunFakeClaude(args []string) int {
 
 	var settings Settings
 
-	sessionID, resume := "", false
+	sessionID, resume, prompt := "", false, ""
 
 	for i := 0; i+1 < len(args); i++ {
 		switch args[i] {
 		case "--settings":
 			json.Unmarshal([]byte(args[i+1]), &settings)
+		case "--append-system-prompt":
+			prompt = args[i+1]
 		case "--session-id":
 			sessionID = args[i+1]
 		case "--resume":
@@ -89,7 +91,11 @@ func RunFakeClaude(args []string) int {
 		return 1
 	}
 
-	fmt.Fprintf(f, "{\"profile\":%q,\"resumed\":%t}\n", profile, resume)
+	if seed, err := os.ReadFile(os.Getenv("CSM_FAKE_SEED")); err == nil && !resume {
+		f.Write(seed)
+	}
+
+	fmt.Fprintf(f, "{\"profile\":%q,\"resumed\":%t,\"prompt\":%q}\n", profile, resume, prompt)
 	f.Close()
 
 	runFakeHooks(settings, "SessionStart", map[string]string{"session_id": sessionID, "hook_event_name": "SessionStart"})
