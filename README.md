@@ -368,9 +368,53 @@ All four were checked against the installed CLIs' help. If an installed version 
 
 `csm next`, `csm use` and automatic failover run through the same engine. When the agent can resume its own session (all four can), the conversation is carried as before and the handoff is written as a safety copy; the opening note just says which account the session moved from. When it cannot, the new session starts with the full handoff instruction.
 
+### Context checkpoints
+
+A handoff normally happens at the moment of a switch. A **checkpoint** lets you save the task first, look at what csm captured, correct it, and hand it over later:
+
+```
+$ csm checkpoint
+CSM checkpoint
+
+ID                                           20261012T102700Z-claude-checkpoint
+Agent                                        claude/personal
+Session                                      2f0b1d57-9447-4c51-bf1e-25706ba06d89
+Task                                         Add exponential backoff retries to the webhook sender…
+Repository                                   ~/src/webhook-service
+Branch                                       feature/webhook-retries
+Working tree                                 0 staged, 1 unstaged, 2 untracked
+Files touched                                3 (from the session record)
+Next steps                                   3
+MCP servers                                  2
+Complete                                     yes
+
+$ csm checkpoint edit 20261012T102700Z-claude-checkpoint --notes "Keep retries out of the request path"
+$ csm handoff --checkpoint 20261012T102700Z-claude-checkpoint codex-main
+```
+
+| Command | What it does |
+| --- | --- |
+| `csm checkpoint [--task t] [--next step]… [--notes n]` | capture the task in this project without stopping anything |
+| `csm checkpoint list` | checkpoints and handoffs for this project, newest first |
+| `csm checkpoint show <id>` | the brief, plus what changed in the repository since |
+| `csm checkpoint edit <id> …` | replace the task, next steps or notes |
+| `csm handoff --checkpoint <id> <account>` | continue that checkpoint with another account or agent |
+
+The desktop app does the same from **Handoffs → Save checkpoint** and **Continue with another agent**, through the same code in the service.
+
+How it works:
+
+- **Where the context comes from.** The session the checkpoint describes is the live csm-managed session in the project, else the last one csm stopped there. Its task, progress note, files, commands, decisions and next steps come from the agent's own session record, exactly as for a handoff. Without a readable record, only the repository state is saved and the checkpoint is marked partial. Nothing is invented: the task shown is either the user's last request or text you wrote.
+- **Your edits are separate.** `--task`, `--next` and `--notes` are stored next to what csm extracted, never over it, and are redacted like everything else. The brief says which is which.
+- **Facts versus reports.** The repository section (root, branch, HEAD and its subject, staged/unstaged/untracked counts, status, diff stat) is what csm read from git. The progress note, files and commands are what the agent's record says, and are labelled that way.
+- **Storage.** A checkpoint is a handoff directory with `"kind": "checkpoint"` under `~/.csm/handoffs/<project>/<id>/`: the same `handoff.json` (version 1), `handoff.md`, `git-status.txt` and `diff.patch`, written atomically, `0600` in a `0700` directory. Each checkpoint names the one it supersedes; none are deleted. IDs are checked against a strict pattern, so an ID can never name a path, and a file that fails to parse or has an unknown kind is skipped and reported.
+- **Continuing.** A handoff from a checkpoint re-reads the session when it can, falls back to the checkpoint's context when it cannot, carries your edits, captures the repository again and compares it with the checkpoint. A running session also picks up the newest checkpoint saved from it, so editing a checkpoint and then switching from the desktop carries the edits.
+- **Drift.** If the branch, HEAD or working tree changed, or files the checkpoint names are gone, the brief and the opening instruction say so and the agent is told to reconcile before editing. csm never resets, cleans, stashes or checks anything out to match a checkpoint. A checkpoint from another repository is refused.
+- **Outcome.** `handoff.json` records how the brief was delivered (as the opening instruction, or only as a file), whether the agent process started and where, and the drift check. The outcome is `complete` only when the agent started with the brief in an unchanged repository; anything else is `partial` with the reasons listed, and a launch error is `failed`. csm cannot see whether the agent followed the brief; its terminal shows that.
+
 ### Lifecycle and recovery
 
-`handoff.json` records the stage: `checkpointed`, `context_extracted`, `mcp_prepared`, `target_started`. Handoffs are kept; `csm status` shows the latest one for the project. If `csm` dies between stopping one agent and starting the other, the transition is recorded under the target agent, and `csm <agent>` in that project offers to finish it.
+`handoff.json` records the stage: `checkpointed`, `context_extracted`, `mcp_prepared`, `target_started` (or `failed` if the agent could not be launched), and the outcome described above. Handoffs are kept; `csm status` shows the latest one for the project. If `csm` dies between stopping one agent and starting the other, the transition is recorded under the target agent, and `csm <agent>` in that project offers to finish it.
 
 ### Limitations
 
