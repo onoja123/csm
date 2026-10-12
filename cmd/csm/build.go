@@ -203,6 +203,10 @@ type AgentSwitch struct {
 	Reason  string    `json:"reason,omitempty"`
 	Started bool      `json:"started"`
 	Handoff string    `json:"handoff,omitempty"`
+	// Commit holds the outgoing agent's work at the switch; the task's own commit then holds only the receiving agent's.
+	Commit      string `json:"commit,omitempty"`
+	FromSession string `json:"from_session,omitempty"`
+	ToSession   string `json:"to_session,omitempty"`
 }
 
 // Completion separates what CSM measured from what the agent claimed; Claimed* fields are never treated as facts.

@@ -57,6 +57,10 @@ func TestUsageLimitOnEveryAccountHandsTheTaskToTheNextAgent(t *testing.T) {
 		t.Fatalf("the handoff must link the session it left and the one it started: %+v → %+v", st.Source, st.Target)
 	}
 
+	if st.SourceCommit != "" {
+		t.Fatal("csm must not commit in a repository outside Build Room")
+	}
+
 	if res.files["handoff-count"] != "2" {
 		t.Fatalf("one handoff per limit expected (alpha→beta, beta→codex), got %s", res.files["handoff-count"])
 	}

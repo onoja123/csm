@@ -65,6 +65,17 @@ func fakeWait(term <-chan os.Signal, d time.Duration) int {
 	}
 }
 
+// fakePartial writes a step's "partial" files, standing in for work an agent did before it hit a limit.
+func fakePartial() {
+	step, fixtures := os.Getenv("CSM_BUILD_STEP"), os.Getenv("CSM_FAKE_WORK")
+
+	if step == "" || fixtures == "" || !fakeStepName.MatchString(step) {
+		return
+	}
+
+	fakeCopy(filepath.Join(fixtures, step, "partial"))
+}
+
 func fakeCopy(files string) {
 	cwd, _ := os.Getwd()
 

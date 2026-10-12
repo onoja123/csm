@@ -144,6 +144,8 @@ func RunFakeClaude(args []string) int {
 		failure["last_assistant_message"] = "API Error: Overloaded"
 	}
 
+	fakePartial()
+
 	if secs, err := strconv.Atoi(os.Getenv("CSM_FAKE_LIMIT_AFTER")); err == nil && secs > 0 {
 		select {
 		case <-term:

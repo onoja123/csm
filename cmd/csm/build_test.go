@@ -531,3 +531,29 @@ func TestBuildTitleUsesTheLeadOfTheInstruction(t *testing.T) {
 		}
 	}
 }
+
+func TestRunnerCommitsOnlyInsideBuildWorktrees(t *testing.T) {
+	home := t.TempDir()
+	repo := gitRepo(t)
+	r := &runner{state: &State{Home: home}, project: Project{Dir: repo}, cwd: repo}
+
+	t.Setenv("CSM_BUILD_ID", "20260101-000000-abcdef")
+
+	if r.inBuildWorktree() {
+		t.Fatal("a repository outside ~/.csm/builds must never get a commit from csm")
+	}
+
+	tree := filepath.Join(home, buildsDir, "20260101-000000-abcdef", "worktrees", "api")
+	os.MkdirAll(tree, 0o700)
+	r.project.Dir = tree
+
+	if !r.inBuildWorktree() {
+		t.Fatal("a Build Room worktree is where the switch commit belongs")
+	}
+
+	t.Setenv("CSM_BUILD_ID", "")
+
+	if r.inBuildWorktree() {
+		t.Fatal("without a build, no commit")
+	}
+}

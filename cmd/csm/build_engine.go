@@ -610,7 +610,7 @@ func (e *buildEngine) noteSwitches(b *Build, a *Attempt) {
 			continue
 		}
 
-		sw := AgentSwitch{At: st.CreatedAt, From: st.Source.String(), To: st.Target.String(), Reason: st.Reason, Handoff: st.ID}
+		sw := AgentSwitch{At: st.CreatedAt, From: st.Source.String(), To: st.Target.String(), Reason: st.Reason, Handoff: st.ID, Commit: st.SourceCommit, FromSession: st.Source.SessionID, ToSession: st.Target.SessionID}
 		sw.Started = st.Outcome != nil && st.Outcome.Started
 		seen = append(seen, sw)
 	}
@@ -619,12 +619,12 @@ func (e *buildEngine) noteSwitches(b *Build, a *Attempt) {
 
 	for _, sw := range seen {
 		if i := slices.IndexFunc(a.Switches, func(o AgentSwitch) bool { return o.Handoff == sw.Handoff }); i >= 0 {
-			a.Switches[i].Started = sw.Started
+			a.Switches[i].Started, a.Switches[i].ToSession = sw.Started, sw.ToSession
 
 			if t := b.task(a.TaskID); t != nil {
 				for j := range t.Switches {
 					if t.Switches[j].Handoff == sw.Handoff {
-						t.Switches[j].Started = sw.Started
+						t.Switches[j].Started, t.Switches[j].ToSession = sw.Started, sw.ToSession
 					}
 				}
 			}
@@ -917,7 +917,7 @@ func (e *buildEngine) finishWork(b *Build, a *Attempt) {
 	var rep workReport
 
 	parseErr := readReport(a.Report, &rep)
-	head, committed, err := commitAll(t.Worktree, fmt.Sprintf("%s\n\nCSM Build Room task %s (run %s)", t.Title, t.ID, b.ID))
+	head, committed, err := commitAll(t.Worktree, fmt.Sprintf("%s\n\nCSM Build Room task %s (run %s)\n\nCSM-Agent: %s/%s\nCSM-Build: %s", t.Title, t.ID, b.ID, a.Provider, a.Account, b.ID))
 
 	if err != nil {
 		e.taskProblem(b, t, "CSM could not commit the task's changes: "+err.Error(), "Inspect the worktree, fix the problem and retry or accept the task.")
@@ -1674,6 +1674,10 @@ func prBody(b *Build) string {
 
 		for _, sw := range t.Switches {
 			fmt.Fprintf(&s, "; moved from %s to %s (%s)", sw.From, sw.To, strings.ReplaceAll(orDash(sw.Reason), "_", " "))
+
+			if sw.Commit != "" {
+				fmt.Fprintf(&s, ", %s's work is commit %s", sw.From, shortSHA(sw.Commit))
+			}
 		}
 
 		s.WriteString("\n")

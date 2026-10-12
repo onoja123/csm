@@ -64,6 +64,11 @@ func (r *runner) buildHandoff(source provider.Provider, from *Account, sessionID
 	st.Stage = handoff.StageContextExtracted
 	r.step("Capturing task context", contextOK)
 
+	if commit := r.commitBuildWork(st); commit != "" {
+		st.SourceCommit = commit
+		r.step("Committing "+st.Source.String()+"'s work", true)
+	}
+
 	var diff []byte
 
 	st.Git, diff = handoff.CaptureGit(r.cwd)
@@ -615,4 +620,60 @@ func printLatestHandoff(log *Logger, s *State, projectDir string, now time.Time)
 	log.Info("Last handoff")
 	log.Info("  %s → %s, %s, %s ago", st.Source, st.Target, st.Stage, now.Sub(st.CreatedAt).Round(time.Second))
 	log.Info("  %s", displayPath(filepath.Join(dir, handoff.FileMD)))
+}
+
+// inBuildWorktree reports whether this runner works in a worktree Build Room created, the only place csm commits for an agent.
+func (r *runner) inBuildWorktree() bool {
+	if os.Getenv("CSM_BUILD_ID") == "" {
+		return false
+	}
+
+	root, err := filepath.EvalSymlinks(filepath.Join(r.state.Home, buildsDir))
+	if err != nil {
+		return false
+	}
+
+	dir, err := filepath.EvalSymlinks(r.project.Dir)
+
+	return err == nil && !outside(root, dir) && dir != root
+}
+
+// commitBuildWork records the outgoing agent's changes before another takes over, so the branch history shows which agent wrote what.
+func (r *runner) commitBuildWork(st *handoff.State) string {
+	if !r.inBuildWorktree() {
+		return ""
+	}
+
+	msg := fmt.Sprintf("Work by %s before handoff to %s\n\n%s", st.Source, st.Target, agentTrailers(st.Source.String(), st.Source.SessionID, st.ID))
+
+	head, committed, err := commitAll(r.cwd, msg)
+	if err != nil {
+		slog.Debug("commit build work at handoff", "err", err)
+
+		return ""
+	}
+
+	if !committed {
+		return ""
+	}
+
+	return head
+}
+
+func agentTrailers(agent, sessionID, handoffID string) string {
+	lines := []string{"CSM-Agent: " + agent}
+
+	if sessionID != "" {
+		lines = append(lines, "CSM-Session: "+sessionID)
+	}
+
+	if handoffID != "" {
+		lines = append(lines, "CSM-Handoff: "+handoffID)
+	}
+
+	if id := os.Getenv("CSM_BUILD_ID"); validBuildID(id) {
+		lines = append(lines, "CSM-Build: "+id)
+	}
+
+	return strings.Join(lines, "\n")
 }
