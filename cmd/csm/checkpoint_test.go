@@ -350,3 +350,47 @@ func TestLiveSwitchCarriesANamedCheckpoint(t *testing.T) {
 		t.Fatalf("git changed: %q → %q", res.gitBefore, res.gitAfter)
 	}
 }
+
+func TestCheckpointEndpoints(t *testing.T) {
+	d, srv := testDaemon(t)
+	project, _ := filepath.EvalSymlinks(t.TempDir())
+
+	if out, err := exec.Command("git", "-C", project, "init", "-q", "-b", "main").CombinedOutput(); err != nil {
+		t.Fatalf("%s", out)
+	}
+
+	code, created, raw := call(t, srv, "POST", "/v1/checkpoints", map[string]any{"project_dir": project, "task": "Port the parser", "next_steps": []string{"Write the lexer"}})
+
+	if code != 200 || created["kind"] != "checkpoint" || created["project"] == "" {
+		t.Fatalf("create: %d %s", code, raw)
+	}
+
+	id, proj := created["id"].(string), created["project"].(string)
+	code, got, raw := call(t, srv, "GET", "/v1/handoffs/"+proj+"/"+id, nil)
+
+	if code != 200 || got["current"] == nil || !strings.Contains(got["markdown"].(string), "Port the parser") {
+		t.Fatalf("get: %d %s", code, raw)
+	}
+
+	code, edited, raw := call(t, srv, "PATCH", "/v1/handoffs/"+proj+"/"+id, map[string]any{"task": "Port the parser to Go", "notes": "Authorization: Bearer abcdefghijklmnopqrstuvwxyz123456"})
+
+	if code != 200 || edited["edits"].(map[string]any)["task"] != "Port the parser to Go" || strings.Contains(string(raw), "abcdefghijklmnopqrstuvwxyz123456") {
+		t.Fatalf("patch: %d %s", code, raw)
+	}
+
+	if code, _, _ := call(t, srv, "PATCH", "/v1/handoffs/"+proj+"/..%2F..%2Fx", map[string]any{"task": "x"}); code != 400 && code != 404 {
+		t.Fatalf("traversal patch = %d", code)
+	}
+
+	if code, _, _ := call(t, srv, "POST", "/v1/checkpoints", map[string]any{"project_dir": filepath.Join(project, "missing")}); code != 400 {
+		t.Fatalf("missing project = %d", code)
+	}
+
+	if _, err := d.state(); err != nil {
+		t.Fatal(err)
+	}
+
+	if code, _, raw := call(t, srv, "POST", "/v1/handoffs", map[string]any{"project_dir": project, "target_account": "nobody", "checkpoint_id": id, "preview": true}); code != 404 {
+		t.Fatalf("unknown target = %d %s", code, raw)
+	}
+}
