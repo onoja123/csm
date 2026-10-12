@@ -70,6 +70,10 @@ func RunFakeClaude(args []string) int {
 		}
 	}
 
+	if n := len(args); n > 0 && !strings.HasPrefix(args[n-1], "-") && (n == 1 || !strings.HasPrefix(args[n-2], "-")) {
+		prompt = args[n-1]
+	}
+
 	if sessionID == "" {
 		sessionID = NewSessionID()
 	}
@@ -105,6 +109,14 @@ func RunFakeClaude(args []string) int {
 
 	term := make(chan os.Signal, 1)
 	signal.Notify(term, syscall.SIGTERM)
+	limited := fakeLimited(profile)
+
+	if !limited {
+		if code, ok := fakeBuild(term); ok {
+			return code
+		}
+	}
+
 	if slices.Contains(strings.Split(os.Getenv("CSM_FAKE_HOLD"), ","), profile) {
 		hold := fakeHold()
 
@@ -116,7 +128,7 @@ func RunFakeClaude(args []string) int {
 		}
 	}
 
-	if !slices.Contains(strings.Split(os.Getenv("CSM_FAKE_LIMIT"), ","), profile) {
+	if !limited {
 		return 0
 	}
 
@@ -173,7 +185,7 @@ func runFakeStatusLine(settings Settings, profile string) {
 	in.RateLimits.FiveHour = claudeRateWindow{UsedPercentage: 42, ResetsAt: time.Now().Add(2 * time.Hour).Unix()}
 	in.RateLimits.SevenDay = claudeRateWindow{UsedPercentage: 17, ResetsAt: time.Now().Add(72 * time.Hour).Unix()}
 
-	if slices.Contains(strings.Split(os.Getenv("CSM_FAKE_LIMIT"), ","), profile) {
+	if fakeLimited(profile) {
 		in.RateLimits.FiveHour.UsedPercentage = 100
 	}
 
@@ -198,7 +210,7 @@ func fakePrint(profile string) int {
 	ev.RateLimitInfo.UnifiedWindows.FiveHour = claudeUnifiedWindow{Utilization: 0.42, ResetsAt: time.Now().Add(2 * time.Hour).Unix()}
 	ev.RateLimitInfo.UnifiedWindows.SevenDay = claudeUnifiedWindow{Utilization: 0.17, ResetsAt: time.Now().Add(72 * time.Hour).Unix()}
 
-	if slices.Contains(strings.Split(os.Getenv("CSM_FAKE_LIMIT"), ","), profile) {
+	if fakeLimited(profile) {
 		ev.RateLimitInfo.Status = "rejected"
 		ev.RateLimitInfo.UnifiedWindows.FiveHour.Utilization = 1
 	}
