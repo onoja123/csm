@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/onoja123/csm/internal/handoff"
 	"github.com/onoja123/csm/internal/provider"
 )
 
@@ -869,6 +870,24 @@ func cmdAuto(log *Logger, home string, args []string) error {
 		return err
 	}
 
+	if len(args) >= 1 && args[0] == "handoff" {
+		if len(args) != 2 {
+			return errors.New("usage: csm auto handoff <agent>[,<agent>...] | csm auto handoff off\n\nExample: csm auto handoff codex,gemini")
+		}
+
+		ids := strings.Split(args[1], ",")
+
+		if args[1] == "off" {
+			ids = nil
+		}
+
+		if err := s.update(func(state *State) error { return state.Config.setHandoffTo(ids) }); err != nil {
+			return err
+		}
+
+		args = []string{"status"}
+	}
+
 	if len(args) != 1 {
 		return errBadPolicy
 	}
@@ -881,6 +900,12 @@ func cmdAuto(log *Logger, home string, args []string) error {
 	}
 
 	log.Info("Failover: %s", describePolicy(s.Config.policy()))
+	log.Info("Hand off to another agent: %s", describeHandoffTo(s.Config.HandoffTo))
+
+	if len(s.Config.HandoffTo) > 0 && s.Config.policy() != policyAutomatic {
+		log.Info("  (only used when failover is automatic: csm auto automatic)")
+	}
+
 	now := time.Now()
 
 	for _, id := range s.providersInUse() {
@@ -900,25 +925,50 @@ func cmdRun(log *Logger, home, providerID string, args []string) (int, error) {
 		return 1, err
 	}
 
-	pending := ""
+	var prev *nextRun
 
 	for {
 		r, err := newRunner(log, s, providerID)
 		if err != nil {
-			finishHandoff(pending, "", false, err, time.Now())
-
-			return 1, err
+			return 1, autoHandoffFailed(log, prev, err)
 		}
 
-		r.pendingHandoff = pending
+		if prev != nil {
+			r.pendingHandoff, r.autoHops, r.tried = prev.handoffDir, prev.autoHops, prev.tried
+		}
 
 		code, next, err := r.run(args)
-		if err != nil || next == nil {
-			return code, err
+		if err != nil {
+			return code, autoHandoffFailed(log, prev, err)
 		}
 
-		providerID, args, pending = next.providerID, next.args, next.handoffDir
+		if next == nil {
+			return code, nil
+		}
+
+		providerID, args, prev = next.providerID, next.args, next
 	}
+}
+
+// autoHandoffFailed tells the user what was kept when the agent an automatic handoff chose could not run.
+func autoHandoffFailed(log *Logger, prev *nextRun, err error) error {
+	if prev == nil || !prev.auto {
+		return err
+	}
+
+	if st, loadErr := handoff.Load(prev.handoffDir); loadErr == nil && st.Outcome != nil && st.Outcome.Started {
+		return err
+	}
+
+	if prev.handoffDir != "" {
+		finishHandoff(prev.handoffDir, "", false, err, time.Now())
+		log.Info("\nAutomatic handoff to %s did not start: %v", prev.target, err)
+		log.Info("The task context is kept at %s.", displayPath(filepath.Join(prev.handoffDir, handoff.FileMD)))
+	}
+
+	log.Info("Continue by hand with: csm handoff %s", prev.target)
+
+	return err
 }
 
 // newRunner checks that an agent is installed and usable and prepares to run it in the current directory.

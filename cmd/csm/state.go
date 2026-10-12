@@ -31,6 +31,8 @@ type Config struct {
 	AccountOrder     []string          `json:"account_order"`
 	AutoFailover     bool              `json:"auto_failover"`
 	FailoverPolicy   string            `json:"failover_policy,omitempty"`
+	// HandoffTo lists the agents, in order, that automatic failover may hand the task to once every account of the running agent is unavailable.
+	HandoffTo []string `json:"handoff_to,omitempty"`
 }
 
 type Account struct {

@@ -49,6 +49,9 @@ type runner struct {
 	pendingHandoff string
 	// checkpointID is a saved checkpoint the next handoff should continue, set by `csm handoff --checkpoint` or a switch request.
 	checkpointID string
+	// autoHops counts automatic cross-agent handoffs in this csm invocation; tried holds the agents already used, so failover cannot cycle.
+	autoHops int
+	tried    map[string]bool
 }
 
 type usageCheck struct {
@@ -66,6 +69,10 @@ type outcome struct {
 	sessionID    string
 	noneLeft     bool
 	autoDisabled bool
+	// limitHandled makes the first confirmed limit the only one acted on; the hook, the status line and the poller can all report it.
+	limitHandled bool
+	// autoHandoff marks a cross-agent switch that failover started on its own, not one the user asked for.
+	autoHandoff bool
 }
 
 func (r *runner) step(label string, ok bool) {
@@ -374,6 +381,12 @@ func (r *runner) currentSessionID(acct *Account, since time.Time, fallback strin
 }
 
 func (r *runner) handleFailure(acct *Account, res *outcome, f provider.Failure, userStopped bool, stop func()) {
+	if f.Reason == provider.StopReasonUsageLimit && res.limitHandled {
+		slog.Debug("usage limit already handled", "account", acct.Name)
+
+		return
+	}
+
 	res.failure = f
 	res.reason = f.Reason
 
@@ -389,9 +402,11 @@ func (r *runner) handleFailure(acct *Account, res *outcome, f provider.Failure, 
 		}
 	}
 
-	if res.reason != provider.StopReasonUsageLimit || res.switchTo != "" {
+	if res.reason != provider.StopReasonUsageLimit || res.switchTo != "" || res.crossTo != "" {
 		return
 	}
+
+	res.limitHandled = true
 
 	err := r.state.update(func(state *State) error {
 		a, err := state.resolveAccount(acct.Name)
@@ -423,6 +438,14 @@ func (r *runner) handleFailure(acct *Account, res *outcome, f provider.Failure, 
 
 	next, err := r.state.bestAccount(r.provider.ID(), acct.Name, r.unavailable, time.Now())
 	if err != nil {
+		if to := r.crossFallback(time.Now()); to != "" {
+			res.crossTo, res.autoHandoff = to, true
+			r.beginSwitch(acct, to, res)
+			stop()
+
+			return
+		}
+
 		res.noneLeft = true
 
 		return
@@ -431,6 +454,52 @@ func (r *runner) handleFailure(acct *Account, res *outcome, f provider.Failure, 
 	res.switchTo = next.Name
 	r.beginSwitch(acct, next.Name, res)
 	stop()
+}
+
+const maxAutoHandoffs = 2
+
+// crossFallback picks the account of the first configured agent that can take the task now: installed, a ready verified account, and a way to receive the brief.
+func (r *runner) crossFallback(now time.Time) string {
+	if r.autoHops >= maxAutoHandoffs {
+		slog.Debug("automatic handoff limit reached", "hops", r.autoHops)
+
+		return ""
+	}
+
+	for _, id := range r.state.Config.HandoffTo {
+		if id == r.provider.ID() || r.tried[id] {
+			continue
+		}
+
+		p, err := provider.Find(id)
+		if err != nil {
+			slog.Debug("handoff fallback unavailable", "provider", id, "err", err)
+
+			continue
+		}
+
+		features, err := p.Features()
+		if err != nil || !provider.CanInject(p, features) {
+			slog.Debug("handoff fallback cannot take an instruction", "provider", id, "err", err)
+
+			continue
+		}
+
+		acct, err := r.state.bestAccount(id, "", r.unavailable, now)
+		if err != nil {
+			continue
+		}
+
+		if _, err := verifyProfile(p, acct); err != nil {
+			slog.Debug("handoff fallback account unusable", "account", acct.Name, "err", err)
+
+			continue
+		}
+
+		return acct.Name
+	}
+
+	return ""
 }
 
 func (r *runner) handleSwitchRequest(acct *Account, res *outcome, stop func()) {
@@ -686,6 +755,9 @@ func (r *runner) report(acct *Account, res outcome) {
 		r.log.Info("\n%s reported a usage limit on %s.", r.provider.Name(), acct.Name)
 
 		switch {
+		case res.noneLeft && len(r.state.Config.HandoffTo) > 0:
+			r.log.Info("All configured accounts are currently unavailable, and no agent in the handoff list (%s) can take over now. Automatic failover paused.", strings.Join(r.state.Config.HandoffTo, ", "))
+			r.log.Info("The task context is saved; continue it later with: csm handoff <account>")
 		case res.noneLeft:
 			r.log.Info("All configured accounts are currently unavailable. Automatic failover paused.")
 		case res.autoDisabled && r.state.Config.policy() == policyDisabled:

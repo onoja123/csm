@@ -37,6 +37,7 @@ Commands:
   next [provider]          Move to the next ready account
   usage [name...] [--cached]  Check 5-hour and 7-day plan usage per account
   auto automatic|manual|disabled|status  Set what happens on a usage limit (on/off still work)
+  auto handoff <agent,...>|off  Agents to hand the task to when every account of the running one is limited
   mcp [account]            Show the MCP servers each account would start here
   mcp handoff <from> <to>  Preview moving MCP servers between accounts (--apply writes them)
   claude [args...]         Run Claude Code under the active Claude Code account

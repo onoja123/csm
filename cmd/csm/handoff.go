@@ -206,6 +206,10 @@ type nextRun struct {
 	providerID string
 	args       []string
 	handoffDir string
+	auto       bool
+	autoHops   int
+	tried      map[string]bool
+	target     string
 }
 
 func (r *runner) crossSwitch(from *Account, res outcome) (*nextRun, error) {
@@ -228,7 +232,12 @@ func (r *runner) crossSwitch(from *Account, res outcome) (*nextRun, error) {
 	r.log.Info("Code Session Manager")
 	r.log.Blank()
 
-	r.log.Info("Switching %s (%s) → %s (%s).\n", from.Name, r.provider.Name(), target.Name, p.Name())
+	if res.autoHandoff {
+		r.log.Info("%s reached its usage limit and no other %s account is ready.", from.Name, r.provider.Name())
+		r.log.Info("Automatic handoff: %s (%s) → %s (%s).\n", from.Name, r.provider.Name(), target.Name, p.Name())
+	} else {
+		r.log.Info("Switching %s (%s) → %s (%s).\n", from.Name, r.provider.Name(), target.Name, p.Name())
+	}
 	r.step("Saving checkpoint", true)
 	r.step("Stopping "+r.provider.Name(), true)
 
@@ -244,6 +253,15 @@ func (r *runner) crossSwitch(from *Account, res outcome) (*nextRun, error) {
 	r.step("Selecting "+target.Name, true)
 	t := handoffTarget{provider: p, features: features, account: target}
 	st, dir := r.buildHandoff(r.provider, from, res.sessionID, res.reason, t, false)
+
+	if res.autoHandoff && dir == "" {
+		r.log.Blank()
+		r.log.Info("Automatic handoff stopped: the task context could not be saved (%s).", st.Error)
+		r.log.Info("%s was not started, so nothing runs without the task. Your working tree is untouched.", p.Name())
+		r.log.Info("Fix the problem and continue with: csm handoff %s", target.Name)
+
+		return nil, errors.New("automatic handoff stopped before starting " + p.Name())
+	}
 
 	args := injectionArgs(t, st, dir)
 	r.step("Handing the task to "+p.Name(), len(args) > 0)
@@ -262,7 +280,19 @@ func (r *runner) crossSwitch(from *Account, res outcome) (*nextRun, error) {
 	r.log.Blank()
 	r.printMCP(mcp.Report{Results: st.MCP})
 
-	return &nextRun{providerID: p.ID(), args: args, handoffDir: r.armHandoff(st, dir, args)}, nil
+	tried := map[string]bool{r.provider.ID(): true}
+
+	for id := range r.tried {
+		tried[id] = true
+	}
+
+	next := &nextRun{providerID: p.ID(), args: args, handoffDir: r.armHandoff(st, dir, args), auto: res.autoHandoff, autoHops: r.autoHops, tried: tried, target: target.Name}
+
+	if res.autoHandoff {
+		next.autoHops++
+	}
+
+	return next, nil
 }
 
 func (s *State) latestCheckpoint(projectDir string) (Checkpoint, bool) {
