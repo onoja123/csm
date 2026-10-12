@@ -68,12 +68,17 @@ func RunFakeGemini(args []string) int {
 		return 1
 	}
 
+	term := make(chan os.Signal, 1)
+	signal.Notify(term, syscall.SIGTERM)
+	fakeEcho("Gemini CLI", profile, sessionID, prompt)
+
+	if code, ok := fakeBuild(term); ok {
+		return code
+	}
+
 	if !slices.Contains(strings.Split(os.Getenv("CSM_FAKE_HOLD"), ","), profile) {
 		return 0
 	}
-
-	term := make(chan os.Signal, 1)
-	signal.Notify(term, syscall.SIGTERM)
 
 	select {
 	case <-term:

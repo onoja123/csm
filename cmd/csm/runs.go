@@ -40,6 +40,17 @@ type runInfo struct {
 	EndedAt    time.Time `json:"ended_at,omitzero"`
 	ExitCode   *int      `json:"exit_code,omitempty"`
 	CSMPID     int       `json:"csm_pid"`
+	BuildID    string    `json:"build_id,omitempty"`
+	BuildTask  string    `json:"build_task,omitempty"`
+	Label      string    `json:"label,omitempty"`
+}
+
+// spawnOpts carries what a Build Room task adds to an ordinary agent run: its environment and the labels the desktop shows.
+type spawnOpts struct {
+	env     []string
+	buildID string
+	task    string
+	label   string
 }
 
 // agentRun is one agent the service started in a pseudo-terminal. The child is `csm <agent>` itself, so every switch, failover and handoff rule stays in the runner.
@@ -132,7 +143,7 @@ func (m *runManager) start(s *State, req startRequest) (*agentRun, error) {
 		args = append([]string{"--resume", req.Resume}, args...)
 	}
 
-	return m.spawn(s, runKindAgent, req.Provider, dir, append([]string{req.Provider}, args...), args, req.Cols, req.Rows)
+	return m.spawn(s, runKindAgent, req.Provider, dir, append([]string{req.Provider}, args...), args, req.Cols, req.Rows, spawnOpts{})
 }
 
 func (m *runManager) startHandoff(s *State, providerID, projectDir, targetAccount, checkpointID string, cols, rows int) (*agentRun, error) {
@@ -147,7 +158,7 @@ func (m *runManager) startHandoff(s *State, providerID, projectDir, targetAccoun
 		args = append(args, "--checkpoint", checkpointID)
 	}
 
-	return m.spawn(s, runKindHandoff, providerID, dir, append(args, targetAccount), nil, cols, rows)
+	return m.spawn(s, runKindHandoff, providerID, dir, append(args, targetAccount), nil, cols, rows, spawnOpts{})
 }
 
 // childEnv drops markers an enclosing agent session leaves behind, so an agent started here is a fresh top-level session.
@@ -155,7 +166,7 @@ func childEnv() []string {
 	var env []string
 
 	for _, kv := range os.Environ() {
-		if strings.HasPrefix(kv, "CLAUDE_CODE_") || strings.HasPrefix(kv, "CLAUDECODE=") || strings.HasPrefix(kv, "CSM_SOCKET=") || strings.HasPrefix(kv, "CSM_HOME=") {
+		if strings.HasPrefix(kv, "CLAUDE_CODE_") || strings.HasPrefix(kv, "CLAUDECODE=") || strings.HasPrefix(kv, "CSM_SOCKET=") || strings.HasPrefix(kv, "CSM_HOME=") || strings.HasPrefix(kv, "CSM_BUILD_") || strings.HasPrefix(kv, "CSM_TASK_REPORT=") {
 			continue
 		}
 
@@ -190,7 +201,7 @@ func cleanProjectDir(dir string) (string, error) {
 	return dir, nil
 }
 
-func (m *runManager) spawn(s *State, kind, providerID, dir string, csmArgs, userArgs []string, cols, rows int) (*agentRun, error) {
+func (m *runManager) spawn(s *State, kind, providerID, dir string, csmArgs, userArgs []string, cols, rows int, opts spawnOpts) (*agentRun, error) {
 	proj := detectProject(dir)
 
 	if kind == runKindAgent {
@@ -201,7 +212,7 @@ func (m *runManager) spawn(s *State, kind, providerID, dir string, csmArgs, user
 
 	cmd := exec.Command(m.csmPath, csmArgs...)
 	cmd.Dir = dir
-	cmd.Env = append(childEnv(), "CSM_HOME="+m.home, "CSM_SOCKET="+m.socket, "TERM=xterm-256color", "COLORTERM=truecolor")
+	cmd.Env = append(append(childEnv(), "CSM_HOME="+m.home, "CSM_SOCKET="+m.socket, "TERM=xterm-256color", "COLORTERM=truecolor"), opts.env...)
 
 	if cols <= 0 || rows <= 0 {
 		cols, rows = 120, 36
@@ -226,6 +237,9 @@ func (m *runManager) spawn(s *State, kind, providerID, dir string, csmArgs, user
 			Status:     runStatusLive,
 			StartedAt:  time.Now(),
 			CSMPID:     cmd.Process.Pid,
+			BuildID:    opts.buildID,
+			BuildTask:  opts.task,
+			Label:      opts.label,
 		},
 		cmd: cmd,
 		tty: tty,
@@ -236,8 +250,11 @@ func (m *runManager) spawn(s *State, kind, providerID, dir string, csmArgs, user
 
 	title := providerName(providerID) + " started"
 
-	if kind == runKindHandoff {
+	switch {
+	case kind == runKindHandoff:
 		title = "Handoff to " + csmArgs[len(csmArgs)-1] + " started"
+	case opts.label != "":
+		title = providerName(providerID) + " started: " + opts.label
 	}
 
 	m.log.add(Activity{Kind: "run.started", Provider: providerID, Account: r.Account, Title: title, Detail: displayPath(proj.Dir), RunID: r.ID})
@@ -444,9 +461,17 @@ func (r *agentRun) output() []byte {
 	return append([]byte(nil), r.buf...)
 }
 
+// exitState reads the status and exit code under the lock, because pump writes them when the process ends.
+func (r *agentRun) exitState() (string, *int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return r.Status, r.ExitCode
+}
+
 // stop asks the child csm to end its agent and escalates to the whole process group if nothing happened after the grace period.
 func (r *agentRun) stop(grace time.Duration) {
-	if r.Status != runStatusLive {
+	if status, _ := r.exitState(); status != runStatusLive {
 		return
 	}
 
@@ -455,7 +480,7 @@ func (r *agentRun) stop(grace time.Duration) {
 	go func() {
 		time.Sleep(grace)
 
-		if r.Status == runStatusLive {
+		if status, _ := r.exitState(); status == runStatusLive {
 			syscall.Kill(-r.CSMPID, syscall.SIGKILL)
 		}
 	}()
@@ -509,7 +534,7 @@ func (m *runManager) view(s *State, r *agentRun) runView {
 		if live && sess.CSMPID == r.CSMPID {
 			v.Provider, v.Account, v.SessionID, v.AgentPID = providerOrDefault(sess.Provider), sess.Account, sess.SessionID, sess.ProcessPID
 			r.mu.Lock()
-			r.Account = v.Account
+			r.Provider, r.Account = v.Provider, v.Account
 			r.mu.Unlock()
 		}
 	}

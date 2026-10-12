@@ -119,6 +119,8 @@ func cmdServe(log *Logger, home string, args []string) error {
 
 	go d.watch(ctx)
 
+	d.builds.start()
+
 	errs := make(chan error, 2)
 	go func() { errs <- srv.Serve(ln) }()
 
@@ -158,6 +160,7 @@ func cmdServe(log *Logger, home string, args []string) error {
 	}
 
 	log.Info("csm service stopping")
+	d.builds.close()
 	d.runs.stopAll(stopGracePeriod)
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 

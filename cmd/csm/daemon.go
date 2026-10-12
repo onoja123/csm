@@ -55,6 +55,7 @@ type daemon struct {
 	log       *activityLog
 	runs      *runManager
 	approvals *approvalQueue
+	builds    *buildEngine
 
 	mu        sync.Mutex
 	settings  desktopSettings
@@ -67,6 +68,7 @@ func newDaemon(home, csmPath, version string) (*daemon, error) {
 	log := newActivityLog(home, bus)
 	d := &daemon{home: home, csmPath: csmPath, version: version, startedAt: time.Now(), bus: bus, log: log, approvals: newApprovalQueue(bus, log)}
 	d.runs = newRunManager(home, csmPath, bus, log)
+	d.builds = newBuildEngine(home, d.runs, log, bus)
 	readJSON(filepath.Join(home, desktopSettingsFile), &d.settings)
 
 	return d, nil
@@ -145,6 +147,13 @@ func (d *daemon) handler() http.Handler {
 	mux.HandleFunc("POST /v1/handoffs", d.postHandoff)
 	mux.HandleFunc("PATCH /v1/handoffs/{project}/{id}", d.patchHandoff)
 	mux.HandleFunc("POST /v1/checkpoints", d.postCheckpoint)
+	mux.HandleFunc("GET /v1/builds", d.getBuilds)
+	mux.HandleFunc("GET /v1/builds/preflight", d.getBuildPreflight)
+	mux.HandleFunc("POST /v1/builds", d.postBuild)
+	mux.HandleFunc("GET /v1/builds/{id}", d.getBuild)
+	mux.HandleFunc("GET /v1/builds/{id}/diff", d.getBuildDiff)
+	mux.HandleFunc("PUT /v1/builds/{id}/plan", d.putBuildPlan)
+	mux.HandleFunc("POST /v1/builds/{id}/actions/{action}", d.postBuildAction)
 	mux.HandleFunc("GET /v1/mcp", d.getMCP)
 	mux.HandleFunc("GET /v1/approvals", d.getApprovals)
 	mux.HandleFunc("POST /v1/approvals/{id}/decision", d.decideApproval)

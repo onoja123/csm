@@ -49,6 +49,7 @@ Commands:
   checkpoint               Save the current task's context without switching (list|show|edit)
                            (--provider codex|gemini|copilot|claude for that agent's active account)
   test failover [codex]    Simulate a failover with a fake agent (no real usage)
+  build list|show <id>     Show Build Room runs; they are created and driven from the CSM app through csm serve
   serve [--detach]         Run the local service the CSM apps connect to (stop|status|pair)
                            (--listen HOST:PORT also accepts token-authenticated devices on the network)
   version                  Print version information`
@@ -173,6 +174,9 @@ func run(args []string) int {
 
 	case "serve":
 		err = cmdServe(log, home, rest)
+
+	case "build", "builds":
+		err = cmdBuild(log, home, rest)
 
 	case "test":
 		providerID := provider.ClaudeID

@@ -3,6 +3,7 @@ package provider
 import (
 	"fmt"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -15,6 +16,10 @@ func fakeEcho(agent, profile, sessionID, instruction string) {
 	}
 
 	if ms, err := strconv.Atoi(os.Getenv("CSM_FAKE_START_MS")); err == nil && ms > 0 && instruction != "" {
+		time.Sleep(time.Duration(ms) * time.Millisecond)
+	}
+
+	if ms, err := strconv.Atoi(os.Getenv("CSM_FAKE_HANDOFF_MS")); err == nil && ms > 0 && strings.HasPrefix(instruction, "You are continuing a coding task") {
 		time.Sleep(time.Duration(ms) * time.Millisecond)
 	}
 
@@ -53,4 +58,15 @@ func fakeEchoLine(line string) {
 	if os.Getenv("CSM_FAKE_ECHO") != "" {
 		fmt.Print("\r\n" + line + "\r\n")
 	}
+}
+
+// fakeLimited says whether a test agent profile hits the simulated usage limit; CSM_FAKE_LIMIT_STEP keeps it to one Build Room step.
+func fakeLimited(profile string) bool {
+	if !slices.Contains(strings.Split(os.Getenv("CSM_FAKE_LIMIT"), ","), profile) {
+		return false
+	}
+
+	step := os.Getenv("CSM_FAKE_LIMIT_STEP")
+
+	return step == "" || step == os.Getenv("CSM_BUILD_STEP")
 }

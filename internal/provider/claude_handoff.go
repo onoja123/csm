@@ -216,3 +216,12 @@ func keys(set map[string]bool) []string {
 
 	return out
 }
+
+// TaskArgs passes the instruction as the opening prompt, which Claude Code runs immediately; the appended system prompt only waits for a message.
+func (c Claude) TaskArgs(f Features, instruction string) []string {
+	if instruction == "" {
+		return nil
+	}
+
+	return []string{instruction}
+}

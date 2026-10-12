@@ -151,7 +151,31 @@ func injectionArgs(target handoffTarget, st *handoff.State, dir string) []string
 		return nil
 	}
 
-	return injector.HandoffArgs(target.features, handoff.Instruction(*st, filepath.Join(dir, handoff.FileMD)))
+	instruction := handoff.Instruction(*st, filepath.Join(dir, handoff.FileMD))
+
+	if contract := buildContract(); contract != "" {
+		if starter, ok := provider.Starter(target.provider); ok {
+			return starter.TaskArgs(target.features, instruction+"\n\n"+contract)
+		}
+	}
+
+	return injector.HandoffArgs(target.features, instruction)
+}
+
+// buildContract is the Build Room completion contract of the task this runner works on, so an agent that takes over still knows where to report and that it should start at once.
+func buildContract() string {
+	path := os.Getenv("CSM_BUILD_CONTRACT")
+
+	if path == "" {
+		return ""
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil || len(data) > 64<<10 {
+		return ""
+	}
+
+	return strings.TrimSpace(string(data))
 }
 
 // armHandoff records how the brief will reach the agent; the runner settles the outcome once the agent has been launched.

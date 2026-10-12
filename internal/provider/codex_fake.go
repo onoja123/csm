@@ -17,7 +17,7 @@ func RunFakeCodex(args []string) int {
 	home := os.Getenv("CODEX_HOME")
 	authFile := filepath.Join(home, "fake-auth")
 	profile := filepath.Base(home)
-	limited := slices.Contains(strings.Split(os.Getenv("CSM_FAKE_LIMIT"), ","), profile)
+	limited := fakeLimited(profile)
 
 	args = slices.DeleteFunc(slices.Clone(args), func(a string) bool { return a == "--no-daemon" })
 
@@ -73,6 +73,12 @@ func RunFakeCodex(args []string) int {
 	wait := time.Duration(0)
 
 	fakeEcho("Codex", profile, sessionID, prompt)
+
+	if !limited {
+		if code, ok := fakeBuild(term); ok {
+			return code
+		}
+	}
 
 	switch {
 	case slices.Contains(strings.Split(os.Getenv("CSM_FAKE_HOLD"), ","), profile):
