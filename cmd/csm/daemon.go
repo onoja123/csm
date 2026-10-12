@@ -43,6 +43,7 @@ type providerInfo struct {
 	Installed bool   `json:"installed"`
 	Version   string `json:"version,omitempty"`
 	Error     string `json:"error,omitempty"`
+	Resume    bool   `json:"resume"`
 }
 
 type daemon struct {
@@ -142,6 +143,8 @@ func (d *daemon) handler() http.Handler {
 	mux.HandleFunc("GET /v1/handoffs", d.getHandoffs)
 	mux.HandleFunc("GET /v1/handoffs/{project}/{id}", d.getHandoff)
 	mux.HandleFunc("POST /v1/handoffs", d.postHandoff)
+	mux.HandleFunc("PATCH /v1/handoffs/{project}/{id}", d.patchHandoff)
+	mux.HandleFunc("POST /v1/checkpoints", d.postCheckpoint)
 	mux.HandleFunc("GET /v1/mcp", d.getMCP)
 	mux.HandleFunc("GET /v1/approvals", d.getApprovals)
 	mux.HandleFunc("POST /v1/approvals/{id}/decision", d.decideApproval)
@@ -186,6 +189,10 @@ func (d *daemon) probeProviders() []providerInfo {
 		if err == nil {
 			info.Installed = true
 			info.Version, err = p.Version()
+
+			if f, ferr := p.Features(); ferr == nil {
+				info.Resume = f.Resume
+			}
 		}
 
 		if err != nil {
@@ -1226,6 +1233,8 @@ type handoffView struct {
 	ProjectDir string `json:"project_dir,omitempty"`
 	Dir        string `json:"dir"`
 	Markdown   string `json:"markdown,omitempty"`
+	// Current compares a saved checkpoint with the repository as it is now; only the detail view computes it.
+	Current *handoff.Verification `json:"current,omitempty"`
 }
 
 func (d *daemon) handoffs(s *State, withMarkdown func(handoffView) bool) []handoffView {
@@ -1257,6 +1266,11 @@ func (d *daemon) handoffs(s *State, withMarkdown func(handoffView) bool) []hando
 			if withMarkdown != nil && withMarkdown(v) {
 				if md, err := os.ReadFile(filepath.Join(dir, handoff.FileMD)); err == nil {
 					v.Markdown = string(md)
+				}
+
+				if st.Kind == handoff.KindCheckpoint && st.Git.Root != "" {
+					cur := handoff.Verify(st, st.Git.Root, time.Now())
+					v.Current = &cur
 				}
 			}
 
@@ -1302,22 +1316,147 @@ func (d *daemon) getHandoff(w http.ResponseWriter, r *http.Request) {
 }
 
 type handoffPreview struct {
-	Mode          string `json:"mode"`
-	Source        string `json:"source,omitempty"`
-	SourceAccount string `json:"source_account,omitempty"`
-	Target        string `json:"target"`
-	TargetAccount string `json:"target_account"`
-	SessionID     string `json:"session_id,omitempty"`
-	TaskContext   string `json:"task_context"`
-	GitState      string `json:"git_state"`
-	Message       string `json:"message"`
-	RunID         string `json:"run_id,omitempty"`
+	Mode          string   `json:"mode"`
+	Source        string   `json:"source,omitempty"`
+	SourceAccount string   `json:"source_account,omitempty"`
+	Target        string   `json:"target"`
+	TargetAccount string   `json:"target_account"`
+	SessionID     string   `json:"session_id,omitempty"`
+	TaskContext   string   `json:"task_context"`
+	GitState      string   `json:"git_state"`
+	Message       string   `json:"message"`
+	RunID         string   `json:"run_id,omitempty"`
+	Checkpoint    string   `json:"checkpoint,omitempty"`
+	Changes       []string `json:"changes,omitempty"`
+}
+
+func (d *daemon) handoffView(s *State, dir string) (handoffView, error) {
+	st, err := handoff.Load(dir)
+	if err != nil {
+		return handoffView{}, err
+	}
+
+	project := filepath.Base(filepath.Dir(dir))
+
+	for _, v := range d.handoffs(s, func(v handoffView) bool { return v.Project == project && v.ID == st.ID }) {
+		if v.Project == project && v.ID == st.ID {
+			return v, nil
+		}
+	}
+
+	return handoffView{}, errors.New("no such handoff")
+}
+
+type checkpointInput struct {
+	ProjectDir string   `json:"project_dir"`
+	Task       string   `json:"task"`
+	NextSteps  []string `json:"next_steps"`
+	Notes      string   `json:"notes"`
+}
+
+func (in checkpointInput) edits() handoff.Edits {
+	return handoff.Edits{Task: in.Task, NextSteps: in.NextSteps, Notes: in.Notes}
+}
+
+func (d *daemon) postCheckpoint(w http.ResponseWriter, r *http.Request) {
+	var in checkpointInput
+
+	if err := readBody(r, &in); err != nil {
+		writeErr(w, 400, err)
+
+		return
+	}
+
+	dir, err := cleanProjectDir(in.ProjectDir)
+	if err != nil {
+		writeErr(w, 400, err)
+
+		return
+	}
+
+	s, err := d.state()
+	if err != nil {
+		writeErr(w, 500, err)
+
+		return
+	}
+
+	_, cpDir, err := s.captureCheckpoint(dir, in.edits(), time.Now())
+	if err != nil {
+		writeErr(w, 500, err)
+
+		return
+	}
+
+	d.rememberProject(dir)
+	d.bus.publish("handoffs", nil)
+
+	v, err := d.handoffView(s, cpDir)
+	if err != nil {
+		writeErr(w, 500, err)
+
+		return
+	}
+
+	writeOK(w, v)
+}
+
+func (d *daemon) patchHandoff(w http.ResponseWriter, r *http.Request) {
+	var in checkpointInput
+
+	if err := readBody(r, &in); err != nil {
+		writeErr(w, 400, err)
+
+		return
+	}
+
+	project, id := r.PathValue("project"), r.PathValue("id")
+
+	if !handoff.ValidID(project) || !handoff.ValidID(id) {
+		writeErr(w, 400, errors.New("invalid checkpoint path"))
+
+		return
+	}
+
+	s, err := d.state()
+	if err != nil {
+		writeErr(w, 500, err)
+
+		return
+	}
+
+	dir := filepath.Join(s.Home, handoffsDir, project, id)
+	st, err := handoff.Load(dir)
+
+	if err != nil {
+		writeErr(w, 404, err)
+
+		return
+	}
+
+	if err := editCheckpoint(dir, &st, in.edits(), time.Now()); err != nil {
+		writeErr(w, 409, err)
+
+		return
+	}
+
+	d.bus.publish("handoffs", nil)
+
+	v, err := d.handoffView(s, dir)
+	if err != nil {
+		writeErr(w, 500, err)
+
+		return
+	}
+
+	writeOK(w, v)
 }
 
 func (d *daemon) postHandoff(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		ProjectDir    string `json:"project_dir"`
 		TargetAccount string `json:"target_account"`
+		CheckpointID  string `json:"checkpoint_id"`
 		Preview       bool   `json:"preview"`
 		Cols          int    `json:"cols"`
 		Rows          int    `json:"rows"`
@@ -1362,10 +1501,35 @@ func (d *daemon) postHandoff(w http.ResponseWriter, r *http.Request) {
 	}
 
 	proj := detectProject(dir)
-	pv := handoffPreview{Target: target.providerID(), TargetAccount: target.Name, GitState: "not a git repository"}
+	pv := handoffPreview{Target: target.providerID(), TargetAccount: target.Name, GitState: "not a git repository", Checkpoint: in.CheckpointID}
 
 	if proj.IsGit {
 		pv.GitState = proj.Branch
+	}
+
+	var saved handoff.State
+
+	if in.CheckpointID != "" {
+		if saved, _, err = s.findHandoff(in.CheckpointID); err != nil {
+			writeErr(w, 404, err)
+
+			return
+		}
+
+		if saved.Kind != handoff.KindCheckpoint {
+			writeErr(w, 409, fmt.Errorf("%s is a handoff record, not a saved checkpoint", in.CheckpointID))
+
+			return
+		}
+
+		if saved.Git.Root != "" && detectProject(saved.Git.Root).Dir != proj.Dir {
+			writeErr(w, 409, fmt.Errorf("checkpoint %s belongs to %s, not %s", in.CheckpointID, displayPath(saved.Git.Root), displayPath(proj.Dir)))
+
+			return
+		}
+
+		v := handoff.Verify(saved, proj.Dir, time.Now())
+		pv.Changes = v.Problems()
 	}
 
 	var live *Session
@@ -1385,6 +1549,10 @@ func (d *daemon) postHandoff(w http.ResponseWriter, r *http.Request) {
 		if live.Account == target.Name {
 			pv.Mode, pv.Message = "none", "The running session already uses "+target.Name+"."
 		}
+	} else if in.CheckpointID != "" {
+		pv.Mode, pv.Source, pv.SourceAccount, pv.SessionID = "checkpoint", saved.Source.Provider, saved.Source.Account, saved.Source.SessionID
+		pv.TaskContext = "from checkpoint " + saved.ID + " (" + ago(saved.CreatedAt, time.Now()) + ")"
+		pv.Message = providerName(target.providerID()) + " will start here as " + target.Name + " with this checkpoint as its brief."
 	} else if cp, found := s.latestCheckpoint(proj.Dir); found {
 		pv.Mode, pv.Source, pv.SourceAccount, pv.SessionID = "checkpoint", providerOrDefault(cp.Provider), cp.Account, cp.SessionID
 		pv.TaskContext = "from the last checkpoint (" + ago(cp.CheckpointedAt, time.Now()) + ")"
@@ -1405,7 +1573,7 @@ func (d *daemon) postHandoff(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if pv.Mode == "session" {
-		if err := requestSwitch(&Logger{out: io.Discard, err: io.Discard}, s, *live, target.Name); err != nil {
+		if err := requestSwitchWith(&Logger{out: io.Discard, err: io.Discard}, s, *live, target.Name, in.CheckpointID); err != nil {
 			writeErr(w, 409, err)
 
 			return
@@ -1417,7 +1585,7 @@ func (d *daemon) postHandoff(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rn, err := d.runs.startHandoff(s, target.providerID(), proj.Dir, target.Name, in.Cols, in.Rows)
+	rn, err := d.runs.startHandoff(s, target.providerID(), proj.Dir, target.Name, in.CheckpointID, in.Cols, in.Rows)
 	if err != nil {
 		writeErr(w, 409, err)
 
@@ -1718,8 +1886,41 @@ func (d *daemon) noteCheckpoint(cp Checkpoint) {
 
 // noteHandoff reads the switch from the handoff package itself, since the transition file is gone within a poll interval.
 func (d *daemon) noteHandoff(st handoff.State, isNew bool) {
+	if st.Kind == handoff.KindCheckpoint {
+		a := Activity{Kind: "checkpoint.saved", Provider: st.Source.Provider, Account: st.Source.Account, Title: "Context checkpoint saved", Refs: map[string]string{"handoff_id": st.ID}}
+
+		if !isNew {
+			a.Kind, a.Title = "checkpoint.edited", "Context checkpoint edited"
+		}
+
+		if task, _ := st.Task(); task != "" {
+			a.Detail = firstLine(task)
+		}
+
+		if st.Git.Root != "" {
+			a.Detail = strings.TrimPrefix(a.Detail+" · "+displayPath(st.Git.Root), " · ")
+		}
+
+		d.log.add(a)
+
+		return
+	}
+
 	a := Activity{Kind: "handoff." + st.Stage, Provider: st.Target.Provider, Account: st.Target.Account, Refs: map[string]string{"handoff_id": st.ID}}
 	sameAgent := st.Source.Provider == st.Target.Provider && st.Source.Account != ""
+
+	if st.Stage == handoff.StageTargetStarted && st.Outcome != nil && st.Outcome.Status == handoff.OutcomePartial && !sameAgent {
+		a.Kind = "handoff.partial"
+		a.Title = "Handoff started with gaps: " + st.Source.String() + " → " + st.Target.String()
+
+		if len(st.Outcome.Problems) > 0 {
+			a.Detail = st.Outcome.Problems[0]
+		}
+
+		d.log.add(a)
+
+		return
+	}
 
 	switch {
 	case st.Stage == handoff.StageTargetStarted && sameAgent:

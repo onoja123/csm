@@ -10,6 +10,8 @@ type Git struct {
 	Root            string   `json:"root,omitempty"`
 	WorkingDir      string   `json:"working_dir"`
 	Branch          string   `json:"branch,omitempty"`
+	Head            string   `json:"head,omitempty"`
+	HeadSubject     string   `json:"head_subject,omitempty"`
 	Worktree        bool     `json:"worktree,omitempty"`
 	Staged          int      `json:"staged"`
 	Unstaged        int      `json:"unstaged"`
@@ -52,6 +54,11 @@ func CaptureGit(cwd string) (Git, []byte) {
 
 	g.Root = root
 	g.Branch, _ = git(cwd, "branch", "--show-current")
+	g.Head, _ = git(cwd, "rev-parse", "HEAD")
+
+	if subject, err := git(cwd, "log", "-1", "--format=%s"); err == nil {
+		g.HeadSubject = truncate(Redact(subject), 120)
+	}
 
 	gitDir, _ := git(cwd, "rev-parse", "--git-dir")
 	commonDir, _ := git(cwd, "rev-parse", "--git-common-dir")

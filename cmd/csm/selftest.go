@@ -230,6 +230,7 @@ func runFailoverScenario(csmPath string, sc scenario) (failoverResult, error) {
 		}
 
 		args = next.args
+		r.pendingHandoff = next.handoffDir
 	}
 
 	res.output = out.String()

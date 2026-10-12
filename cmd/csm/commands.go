@@ -746,9 +746,13 @@ func findManagedSession(s *State, providerID string) (Session, bool, error) {
 }
 
 func requestSwitch(log *Logger, s *State, sess Session, to string) error {
+	return requestSwitchWith(log, s, sess, to, "")
+}
+
+func requestSwitchWith(log *Logger, s *State, sess Session, to, checkpointID string) error {
 	path := filepath.Join(s.projectStateDir(sess.Provider, sess.ProjectDir), requestFile)
 
-	if err := writeJSON(path, SwitchRequest{To: to, RequestedAt: time.Now()}); err != nil {
+	if err := writeJSON(path, SwitchRequest{To: to, RequestedAt: time.Now(), Checkpoint: checkpointID}); err != nil {
 		return err
 	}
 
@@ -896,18 +900,24 @@ func cmdRun(log *Logger, home, providerID string, args []string) (int, error) {
 		return 1, err
 	}
 
+	pending := ""
+
 	for {
 		r, err := newRunner(log, s, providerID)
 		if err != nil {
+			finishHandoff(pending, "", false, err, time.Now())
+
 			return 1, err
 		}
+
+		r.pendingHandoff = pending
 
 		code, next, err := r.run(args)
 		if err != nil || next == nil {
 			return code, err
 		}
 
-		providerID, args = next.providerID, next.args
+		providerID, args, pending = next.providerID, next.args, next.handoffDir
 	}
 }
 

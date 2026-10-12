@@ -135,13 +135,19 @@ func (m *runManager) start(s *State, req startRequest) (*agentRun, error) {
 	return m.spawn(s, runKindAgent, req.Provider, dir, append([]string{req.Provider}, args...), args, req.Cols, req.Rows)
 }
 
-func (m *runManager) startHandoff(s *State, providerID, projectDir, targetAccount string, cols, rows int) (*agentRun, error) {
+func (m *runManager) startHandoff(s *State, providerID, projectDir, targetAccount, checkpointID string, cols, rows int) (*agentRun, error) {
 	dir, err := cleanProjectDir(projectDir)
 	if err != nil {
 		return nil, err
 	}
 
-	return m.spawn(s, runKindHandoff, providerID, dir, []string{"handoff", "--yes", targetAccount}, nil, cols, rows)
+	args := []string{"handoff", "--yes"}
+
+	if checkpointID != "" {
+		args = append(args, "--checkpoint", checkpointID)
+	}
+
+	return m.spawn(s, runKindHandoff, providerID, dir, append(args, targetAccount), nil, cols, rows)
 }
 
 // childEnv drops markers an enclosing agent session leaves behind, so an agent started here is a fresh top-level session.

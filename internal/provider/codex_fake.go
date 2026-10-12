@@ -72,9 +72,11 @@ func RunFakeCodex(args []string) int {
 	signal.Notify(term, syscall.SIGTERM)
 	wait := time.Duration(0)
 
+	fakeEcho("Codex", profile, sessionID, prompt)
+
 	switch {
 	case slices.Contains(strings.Split(os.Getenv("CSM_FAKE_HOLD"), ","), profile):
-		wait = 30 * time.Second
+		wait = fakeHold()
 	case limited:
 		wait = 2 * time.Second
 	}
