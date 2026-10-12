@@ -123,7 +123,7 @@ func TestRenderAndInstruction(t *testing.T) {
 
 	instr := Instruction(st, "/state/handoff.md")
 
-	for _, want := range []string{"continuing a coding task started by another coding agent (claude, account personal)", "Read the csm handoff file: /state/handoff.md", "Do not revert existing work", "branch feature/retry with 1 changed", "most recent request was: Make the retries exponential"} {
+	for _, want := range []string{"continuing a coding task started by another coding agent (claude, account personal)", "Read the csm handoff file: /state/handoff.md", "Do not revert existing work", "branch feature/retry with 1 changed", "The task: Make the retries exponential", "Never reset, clean, stash or check out"} {
 		if !strings.Contains(instr, want) {
 			t.Errorf("instruction missing %q:\n%s", want, instr)
 		}
