@@ -368,6 +368,30 @@ All four were checked against the installed CLIs' help. If an installed version 
 
 `csm next`, `csm use` and automatic failover run through the same engine. When the agent can resume its own session (all four can), the conversation is carried as before and the handoff is written as a safety copy; the opening note just says which account the session moved from. When it cannot, the new session starts with the full handoff instruction.
 
+### Automatic handoff to another agent
+
+Failover already moves a session to another account of the same agent and resumes it. Give it a list of other agents and it goes one step further: when a confirmed usage limit leaves no ready account of the running agent, csm hands the task to the first agent on the list that can take it, with no checkpoint to create and nothing to copy.
+
+```
+$ csm auto automatic
+$ csm auto handoff codex,gemini
+Failover: automatic
+Hand off to another agent: Codex → Gemini CLI when every account of the running agent is unavailable
+```
+
+The desktop app sets the same list under **Accounts → Failover → Then hand off to**. With the list empty (the default), nothing changes.
+
+What happens on a limit:
+
+1. The limit must be one csm already acts on: the agent's own limit report, or a 100% usage window. Other errors, logins and ordinary exits never trigger a switch. If the hook, the status line and the poller all report the same limit, only the first is acted on.
+2. Another account of the same agent is tried first, exactly as before, and its native session is resumed; the handoff written alongside is the recovery copy.
+3. With no account left, csm takes the first listed agent that is installed, has a ready logged-in account, and can take an opening instruction. Agents that fail any of these are skipped, so a missing or logged-out fallback never gets started.
+4. The usual cross-agent switch then runs: checkpoint, stop, capture context and git state, carry MCP configuration, write the handoff, and start the new agent in the same project with the brief as its opening instruction. The terminal shows `Automatic handoff: work (Claude Code) → codex-main (Codex).` and each step.
+5. If the handoff cannot be saved, the new agent is **not** started; csm says why and how to continue (`csm handoff <account>`). If the new agent fails to launch, the handoff is recorded as failed, its brief is kept, and csm prints the same instruction.
+6. At most two automatic cross-agent handoffs happen in one `csm` run, and an agent already used in that run is not chosen again, so two limited agents cannot bounce the task back and forth. Accounts that hit a limit stay in cooldown as before.
+
+The handoff record says it was automatic (`"reason": "usage_limit"`), the activity log shows "Automatic handoff after a usage limit", and Mission Control shows the session as running on the new agent, switched from the old one. A different agent receives a structured brief, not the old conversation; whether it continues on its own depends on the agent acting on its opening instruction (Codex, Gemini CLI and Copilot CLI start working on it; Claude Code receives it as an appended system prompt and waits for your first message).
+
 ### Context checkpoints
 
 A handoff normally happens at the moment of a switch. A **checkpoint** lets you save the task first, look at what csm captured, correct it, and hand it over later:
