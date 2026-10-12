@@ -14,6 +14,10 @@ func fakeEcho(agent, profile, sessionID, instruction string) {
 		return
 	}
 
+	if ms, err := strconv.Atoi(os.Getenv("CSM_FAKE_START_MS")); err == nil && ms > 0 && instruction != "" {
+		time.Sleep(time.Duration(ms) * time.Millisecond)
+	}
+
 	fmt.Printf("\x1b[2m%s · csm test agent, no model · profile %s · session %s\x1b[0m\r\n\r\n", agent, profile, shortID(sessionID))
 
 	if instruction == "" {
@@ -43,4 +47,10 @@ func fakeHold() time.Duration {
 	}
 
 	return 30 * time.Second
+}
+
+func fakeEchoLine(line string) {
+	if os.Getenv("CSM_FAKE_ECHO") != "" {
+		fmt.Print("\r\n" + line + "\r\n")
+	}
 }

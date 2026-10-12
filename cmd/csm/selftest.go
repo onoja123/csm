@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -230,10 +231,11 @@ func runFailoverScenario(csmPath string, sc scenario) (failoverResult, error) {
 		}
 
 		args = next.args
-		r.pendingHandoff = next.handoffDir
+		r.pendingHandoff, r.autoHops, r.tried = next.handoffDir, next.autoHops, next.tried
 	}
 
 	res.output = out.String()
+	res.gitAfter, _ = git("status", "--short", "--branch")
 
 	if err != nil {
 		return res, err
@@ -241,7 +243,6 @@ func runFailoverScenario(csmPath string, sc scenario) (failoverResult, error) {
 
 	res.active = s.active(providerID)
 	res.checkpoint, _ = s.loadCheckpoint(providerID, r.project.Dir)
-	res.gitAfter, _ = git("status", "--short", "--branch")
 	res.usage = map[string]UsageRecord{}
 
 	for _, name := range s.Config.AccountOrder {
@@ -283,6 +284,10 @@ func runFailoverScenario(csmPath string, sc scenario) (failoverResult, error) {
 		"beta-config":  filepath.Join(s.accountsDir(), "beta", ".claude.json"),
 		"mcp-snapshot": filepath.Join(s.projectStateDir(providerID, r.project.Dir), mcpSnapshotFile),
 		"mcp-handoff":  filepath.Join(s.projectStateDir(providerID, r.project.Dir), mcpHandoffFile),
+	}
+
+	if entries, err := os.ReadDir(s.handoffRoot(r.project.Dir)); err == nil {
+		res.files["handoff-count"] = strconv.Itoa(len(entries))
 	}
 
 	if _, dir, err := handoff.Latest(s.handoffRoot(r.project.Dir)); err == nil {

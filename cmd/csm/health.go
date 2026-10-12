@@ -55,6 +55,45 @@ func (c Config) policy() string {
 	return policyManual
 }
 
+// setHandoffTo validates and stores the cross-agent fallback order; an empty list turns automatic handoff off.
+func (c *Config) setHandoffTo(ids []string) error {
+	var out []string
+	seen := map[string]bool{}
+
+	for _, id := range ids {
+		id = strings.TrimSpace(strings.ToLower(id))
+
+		if id == "" || seen[id] {
+			continue
+		}
+
+		if _, err := provider.New(id, ""); err != nil {
+			return fmt.Errorf("unknown agent %q; use %s", id, strings.Join(provider.IDs, ", "))
+		}
+
+		seen[id] = true
+		out = append(out, id)
+	}
+
+	c.HandoffTo = out
+
+	return nil
+}
+
+func describeHandoffTo(ids []string) string {
+	if len(ids) == 0 {
+		return "off (failover stays with the same agent)"
+	}
+
+	names := make([]string, len(ids))
+
+	for i, id := range ids {
+		names[i] = providerName(id)
+	}
+
+	return strings.Join(names, " → ") + " when every account of the running agent is unavailable"
+}
+
 func (c *Config) setPolicy(policy string) error {
 	switch policy {
 	case "on":
