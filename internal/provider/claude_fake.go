@@ -9,7 +9,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -100,17 +99,13 @@ func RunFakeClaude(args []string) int {
 	f.Close()
 
 	runFakeHooks(settings, "SessionStart", map[string]string{"session_id": sessionID, "hook_event_name": "SessionStart"})
+	fakeEcho("Claude Code", profile, sessionID, prompt)
 	runFakeStatusLine(settings, profile)
 
 	term := make(chan os.Signal, 1)
 	signal.Notify(term, syscall.SIGTERM)
-
 	if slices.Contains(strings.Split(os.Getenv("CSM_FAKE_HOLD"), ","), profile) {
-		hold := 30 * time.Second
-
-		if secs, err := strconv.Atoi(os.Getenv("CSM_FAKE_HOLD_SECONDS")); err == nil && secs > 0 {
-			hold = time.Duration(secs) * time.Second
-		}
+		hold := fakeHold()
 
 		select {
 		case <-term:
