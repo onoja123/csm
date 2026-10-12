@@ -263,3 +263,15 @@ func (c Copilot) SessionContext(profileDir, cwd, sessionID string) (handoff.Cont
 
 	return parseSessionFile(filepath.Join(copilotSessionDir(profileDir, sessionID), "events.jsonl"))
 }
+
+func (c Codex) TaskArgs(f Features, instruction string) []string {
+	return c.HandoffArgs(f, instruction)
+}
+
+func (g Gemini) TaskArgs(f Features, instruction string) []string {
+	return g.HandoffArgs(f, instruction)
+}
+
+func (c Copilot) TaskArgs(f Features, instruction string) []string {
+	return c.HandoffArgs(f, instruction)
+}
