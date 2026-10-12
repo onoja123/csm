@@ -173,6 +173,17 @@ csm mcp handoff <from> <to> --apply   # write the compatible ones into the targe
 
 See [MCP failover](#mcp-failover) for what moves and what does not.
 
+### Desktop app service
+
+```bash
+csm serve              # run the local service the CSM desktop app connects to
+csm serve --detach     # the same, in the background (log: ~/.csm/serve.log)
+csm serve status
+csm serve stop
+```
+
+`csm serve` listens on a Unix socket, `~/.csm/csm.sock` (mode 0600), and never on a network port. It exposes accounts, health, failover, sessions, handoffs and MCP configuration as JSON, streams changes as server-sent events, and can start an agent in a pseudo-terminal: the child is `csm <agent>` itself, so switching, failover and handoff behave exactly as in a terminal. Under the service, Claude Code's shell commands can be approved from the desktop through a `PreToolUse` hook; with no desktop connected, Claude Code keeps its own prompt. `csm handoff --yes` skips the confirmation for the service. The desktop app starts the service itself when it is not running.
+
 ### Diagnostics
 
 ```bash
