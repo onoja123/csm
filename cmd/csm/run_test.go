@@ -13,6 +13,10 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	if os.Getenv("CSM_TEST_AS_CLI") == "1" {
+		os.Exit(run(os.Args[1:]))
+	}
+
 	if len(os.Args) > 1 && (os.Args[1] == "hook" || strings.HasPrefix(os.Args[1], "__fake-")) {
 		os.Exit(run(os.Args[1:]))
 	}
