@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -131,6 +132,15 @@ func RunFakeClaude(args []string) int {
 		failure["last_assistant_message"] = "API Error: Overloaded"
 	}
 
+	if secs, err := strconv.Atoi(os.Getenv("CSM_FAKE_LIMIT_AFTER")); err == nil && secs > 0 {
+		select {
+		case <-term:
+			return 143
+		case <-time.After(time.Duration(secs) * time.Second):
+		}
+	}
+
+	fakeEchoLine("Simulated usage limit (CSM_FAKE_LIMIT): " + failure["last_assistant_message"])
 	runFakeHooks(settings, "StopFailure", failure)
 
 	select {
