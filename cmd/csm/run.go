@@ -188,6 +188,7 @@ func (r *runner) launch(acct *Account, args []string, sessionID string, sigs cha
 	}
 
 	finishHandoff(r.pendingHandoff, r.project.Dir, true, nil, time.Now())
+	receivedHandoff := r.pendingHandoff
 	r.pendingHandoff = ""
 
 	startedAt := time.Now()
@@ -302,6 +303,10 @@ wait:
 	}
 
 	res.exitCode = exitCode(waitErr)
+
+	if receivedHandoff != "" {
+		recordTargetSession(receivedHandoff, r.currentSessionID(acct, startedAt, res.sessionID))
+	}
 
 	if res.reason == provider.StopReasonProcessExited && res.switchTo == "" {
 		switch {

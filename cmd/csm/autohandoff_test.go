@@ -53,6 +53,10 @@ func TestUsageLimitOnEveryAccountHandsTheTaskToTheNextAgent(t *testing.T) {
 		t.Fatalf("outcome = %+v", st.Outcome)
 	}
 
+	if st.Source.SessionID == "" || st.Target.SessionID == "" || st.Source.SessionID == st.Target.SessionID {
+		t.Fatalf("the handoff must link the session it left and the one it started: %+v → %+v", st.Source, st.Target)
+	}
+
 	if res.files["handoff-count"] != "2" {
 		t.Fatalf("one handoff per limit expected (alpha→beta, beta→codex), got %s", res.files["handoff-count"])
 	}

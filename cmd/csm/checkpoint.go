@@ -524,3 +524,21 @@ func finishHandoff(dir, projectDir string, started bool, startErr error, now tim
 		slog.Debug("save handoff outcome", "err", err)
 	}
 }
+
+// recordTargetSession links a handoff to the session the receiving agent ran, so the history can be followed from either side.
+func recordTargetSession(dir, sessionID string) {
+	if dir == "" || sessionID == "" {
+		return
+	}
+
+	st, err := handoff.Load(dir)
+	if err != nil || st.Target.SessionID != "" {
+		return
+	}
+
+	st.Target.SessionID = sessionID
+
+	if err := handoff.Save(dir, &st); err != nil {
+		slog.Debug("save handoff target session", "err", err)
+	}
+}
