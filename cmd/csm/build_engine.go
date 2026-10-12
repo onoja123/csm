@@ -342,10 +342,12 @@ func (e *buildEngine) cancelStep(b *Build) {
 			continue
 		}
 
-		if r, ok := e.runs.get(a.RunID); ok && r.Status == runStatusLive {
-			r.stop(stopGracePeriod)
+		if r, ok := e.runs.get(a.RunID); ok {
+			if status, _ := r.exitState(); status == runStatusLive {
+				r.stop(stopGracePeriod)
 
-			continue
+				continue
+			}
 		}
 
 		a.Status, a.EndedAt, a.Note = AttemptStopped, time.Now(), "stopped when the run was cancelled"
@@ -508,7 +510,17 @@ func (e *buildEngine) pollAttempts(b *Build) {
 		}
 
 		run, known := e.runs.get(a.RunID)
-		live := known && run.Status == runStatusLive
+
+		var exit *int
+
+		live := false
+
+		if known {
+			var status string
+
+			status, exit = run.exitState()
+			live = status == runStatusLive
+		}
 
 		e.noteSwitches(b, a)
 
@@ -528,7 +540,7 @@ func (e *buildEngine) pollAttempts(b *Build) {
 		a.EndedAt = time.Now()
 
 		if known {
-			a.ExitCode = run.ExitCode
+			a.ExitCode = exit
 		}
 
 		switch {
@@ -561,8 +573,8 @@ func describeAttempt(a Attempt) string {
 func (e *buildEngine) exitReason(a *Attempt, run *agentRun) string {
 	code := 0
 
-	if run.ExitCode != nil {
-		code = *run.ExitCode
+	if _, exit := run.exitState(); exit != nil {
+		code = *exit
 	}
 
 	reason := fmt.Sprintf("the session ended without a completion report (exit status %d)", code)

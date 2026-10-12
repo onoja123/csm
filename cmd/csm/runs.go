@@ -461,9 +461,17 @@ func (r *agentRun) output() []byte {
 	return append([]byte(nil), r.buf...)
 }
 
+// exitState reads the status and exit code under the lock, because pump writes them when the process ends.
+func (r *agentRun) exitState() (string, *int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return r.Status, r.ExitCode
+}
+
 // stop asks the child csm to end its agent and escalates to the whole process group if nothing happened after the grace period.
 func (r *agentRun) stop(grace time.Duration) {
-	if r.Status != runStatusLive {
+	if status, _ := r.exitState(); status != runStatusLive {
 		return
 	}
 
@@ -472,7 +480,7 @@ func (r *agentRun) stop(grace time.Duration) {
 	go func() {
 		time.Sleep(grace)
 
-		if r.Status == runStatusLive {
+		if status, _ := r.exitState(); status == runStatusLive {
 			syscall.Kill(-r.CSMPID, syscall.SIGKILL)
 		}
 	}()
