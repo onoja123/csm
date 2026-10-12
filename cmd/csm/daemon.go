@@ -802,6 +802,8 @@ type failoverView struct {
 	Policy      string                 `json:"policy"`
 	Description string                 `json:"description"`
 	Providers   []failoverProviderView `json:"providers"`
+	HandoffTo   []string               `json:"handoff_to"`
+	HandoffText string                 `json:"handoff_description"`
 }
 
 type failoverProviderView struct {
@@ -812,7 +814,7 @@ type failoverProviderView struct {
 }
 
 func (d *daemon) failover(s *State) failoverView {
-	v := failoverView{Policy: s.Config.policy(), Description: describePolicy(s.Config.policy()), Providers: []failoverProviderView{}}
+	v := failoverView{Policy: s.Config.policy(), Description: describePolicy(s.Config.policy()), Providers: []failoverProviderView{}, HandoffTo: append([]string{}, s.Config.HandoffTo...), HandoffText: describeHandoffTo(s.Config.HandoffTo)}
 	now := time.Now()
 
 	for _, id := range s.providersInUse() {
@@ -841,7 +843,8 @@ func (d *daemon) getFailover(w http.ResponseWriter, r *http.Request) {
 
 func (d *daemon) putFailover(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Policy string `json:"policy"`
+		Policy    string    `json:"policy"`
+		HandoffTo *[]string `json:"handoff_to"`
 	}
 
 	if err := readBody(r, &in); err != nil {
@@ -857,13 +860,32 @@ func (d *daemon) putFailover(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.update(func(state *State) error { return state.Config.setPolicy(in.Policy) }); err != nil {
+	err = s.update(func(state *State) error {
+		if in.Policy != "" {
+			if err := state.Config.setPolicy(in.Policy); err != nil {
+				return err
+			}
+		}
+
+		if in.HandoffTo != nil {
+			return state.Config.setHandoffTo(*in.HandoffTo)
+		}
+
+		return nil
+	})
+	if err != nil {
 		writeErr(w, 400, err)
 
 		return
 	}
 
-	d.log.add(Activity{Kind: "failover.policy", Title: "Failover policy set to " + s.Config.policy()})
+	if in.Policy != "" {
+		d.log.add(Activity{Kind: "failover.policy", Title: "Failover policy set to " + s.Config.policy()})
+	}
+
+	if in.HandoffTo != nil {
+		d.log.add(Activity{Kind: "failover.policy", Title: "Cross-agent handoff: " + describeHandoffTo(s.Config.HandoffTo)})
+	}
 	d.bus.publish("status", nil)
 	writeOK(w, d.failover(s))
 }
@@ -1930,6 +1952,13 @@ func (d *daemon) noteHandoff(st handoff.State, isNew bool) {
 
 		if st.Git.Root != "" {
 			a.Detail += " · " + displayPath(st.Git.Root)
+		}
+	case st.Stage == handoff.StageTargetStarted && st.Reason == string(provider.StopReasonUsageLimit):
+		a.Kind = "handoff.automatic"
+		a.Title = "Automatic handoff after a usage limit: " + st.Source.String() + " → " + st.Target.String()
+
+		if st.Git.Root != "" {
+			a.Detail = displayPath(st.Git.Root)
 		}
 	case st.Stage == handoff.StageTargetStarted:
 		a.Title = "Handoff completed: " + st.Source.String() + " → " + st.Target.String()
