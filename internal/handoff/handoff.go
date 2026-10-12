@@ -103,6 +103,8 @@ type State struct {
 	// Checkpoint is the saved checkpoint a handoff continued from.
 	Checkpoint string   `json:"checkpoint,omitempty"`
 	Outcome    *Outcome `json:"outcome,omitempty"`
+	// SourceCommit is the commit holding the source agent's work at the switch; csm only makes one in a Build Room worktree.
+	SourceCommit string `json:"source_commit,omitempty"`
 }
 
 func NewID(now time.Time, source, target Agent) string {

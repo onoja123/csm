@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
@@ -8,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onoja123/csm/internal/handoff"
 	"github.com/onoja123/csm/internal/provider"
 )
 
@@ -36,7 +38,8 @@ func TestBuildTaskContinuesThroughAutomaticHandoffAfterAUsageLimit(t *testing.T)
 	h := newBuildHarness(t, map[string][]string{provider.ClaudeID: {"alpha"}, provider.CodexID: {"work-codex"}}, func(s *State) { s.Config.setHandoffTo([]string{"codex"}) })
 	t.Setenv("CSM_FAKE_LIMIT", "alpha")
 	h.fixture("plan", nil, singleTaskPlan("claude"))
-	h.fixture("greet", map[string]string{"greet.go": greetGo}, workReportFixture("greet.go"))
+	h.fixture("greet", map[string]string{"greet.go": greetGo, "greet_test.go": "package demo\n"}, workReportFixture("greet.go", "greet_test.go"))
+	h.write(filepath.Join(h.fixtures, "greet", "partial"), "greet.go", "package demo\n\n// started by the first agent\n")
 
 	b := approvedRun(h, BuildPolicy{RequirePlanApproval: true, Planner: "codex"})
 	final := h.waitFor(b.ID, 60*time.Second, statusIs(BuildAwaitingFinal, BuildNeedsAttention))
@@ -46,6 +49,40 @@ func TestBuildTaskContinuesThroughAutomaticHandoffAfterAUsageLimit(t *testing.T)
 	}
 
 	task := final.task("greet")
+	sw := task.Switches[0]
+
+	if sw.Commit == "" || sw.FromSession == "" || sw.ToSession == "" || sw.FromSession == sw.ToSession {
+		t.Fatalf("the switch must link both sessions and the outgoing agent's commit: %+v", sw)
+	}
+
+	log, _ := gitOut(task.Worktree, "log", "--format=%H%x00%B%x01", task.BaseCommit+"..HEAD")
+	commits := strings.Split(strings.Trim(log, "\x01\n"), "\x01")
+
+	if len(commits) != 2 {
+		t.Fatalf("want one commit per agent, got:\n%s", log)
+	}
+
+	first, last := commits[1], commits[0]
+
+	for _, want := range []string{sw.Commit, "Work by claude/alpha before handoff to codex/work-codex", "CSM-Agent: claude/alpha", "CSM-Session: " + sw.FromSession, "CSM-Handoff: " + sw.Handoff, "CSM-Build: " + final.ID} {
+		if !strings.Contains(first, want) {
+			t.Errorf("first commit missing %q:\n%s", want, first)
+		}
+	}
+
+	if !strings.Contains(last, "CSM-Agent: codex/work-codex") {
+		t.Errorf("the task commit must name the agent that finished it:\n%s", last)
+	}
+
+	if files := gitList(task.Worktree, "diff", "--name-only", sw.Commit+"~1", sw.Commit); !slices.Equal(files, []string{"greet.go"}) {
+		t.Fatalf("the first agent's commit holds only its own work: %v", files)
+	}
+
+	var st handoff.State
+
+	if data, err := os.ReadFile(filepath.Join(h.state.handoffRoot(detectProject(task.Worktree).Dir), sw.Handoff, "handoff.json")); err != nil || json.Unmarshal(data, &st) != nil || st.Target.SessionID != sw.ToSession || st.SourceCommit != sw.Commit {
+		t.Fatalf("the handoff record must name the receiving session and the commit: %+v %v", st.Target, err)
+	}
 
 	if task.Provider != provider.CodexID || len(task.Switches) != 1 || task.Switches[0].From != "claude/alpha" || task.Switches[0].To != "codex/work-codex" || task.Switches[0].Reason != "usage_limit" || !task.Switches[0].Started {
 		t.Fatalf("switches %+v provider %s", task.Switches, task.Provider)
@@ -55,7 +92,7 @@ func TestBuildTaskContinuesThroughAutomaticHandoffAfterAUsageLimit(t *testing.T)
 		t.Fatalf("the runner's handoff must continue the same attempt, got %d attempts", n)
 	}
 
-	if !slices.Equal(task.Completion.FilesChanged, []string{"greet.go"}) {
+	if !slices.Equal(task.Completion.FilesChanged, []string{"greet.go", "greet_test.go"}) {
 		t.Fatalf("completion %+v", task.Completion)
 	}
 
