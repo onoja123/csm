@@ -101,6 +101,8 @@ type Transition struct {
 type SwitchRequest struct {
 	To          string    `json:"to"`
 	RequestedAt time.Time `json:"requested_at"`
+	// Checkpoint names a saved checkpoint whose edits the handoff should carry.
+	Checkpoint string `json:"checkpoint,omitempty"`
 }
 
 func (s *State) saveCheckpoint(c Checkpoint) error {

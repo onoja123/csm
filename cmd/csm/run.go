@@ -45,6 +45,10 @@ type runner struct {
 	in           *bufio.Reader
 	interactive  bool
 	unavailable  map[string]bool
+	// pendingHandoff is a handoff written for the next launch; launch records whether the agent started.
+	pendingHandoff string
+	// checkpointID is a saved checkpoint the next handoff should continue, set by `csm handoff --checkpoint` or a switch request.
+	checkpointID string
 }
 
 type usageCheck struct {
@@ -170,8 +174,14 @@ func (r *runner) launch(acct *Account, args []string, sessionID string, sigs cha
 	slog.Debug("launching agent", "provider", r.provider.Name(), "account", acct.Name, "profile_dir", acct.ConfigDir, "args", r.provider.RedactArgs(args))
 
 	if err := cmd.Start(); err != nil {
+		finishHandoff(r.pendingHandoff, r.project.Dir, false, err, time.Now())
+		r.pendingHandoff = ""
+
 		return outcome{}, fmt.Errorf("start %s: %w", r.provider.Name(), err)
 	}
+
+	finishHandoff(r.pendingHandoff, r.project.Dir, true, nil, time.Now())
+	r.pendingHandoff = ""
 
 	startedAt := time.Now()
 	err := r.state.update(func(state *State) error {
@@ -438,6 +448,10 @@ func (r *runner) handleSwitchRequest(acct *Account, res *outcome, stop func()) {
 		return
 	}
 
+	if req.Checkpoint != "" && handoff.ValidID(req.Checkpoint) {
+		r.checkpointID = req.Checkpoint
+	}
+
 	fresh, err := loadState(r.state.Home)
 	if err != nil {
 		return
@@ -574,8 +588,9 @@ func (r *runner) handoffArgs(from, to *Account, sessionID string, reason provide
 
 	target := handoffTarget{provider: r.provider, features: r.features, account: to}
 	st, dir := r.buildHandoff(source, from, sessionID, reason, target, resumed)
-	args = append(args, injectionArgs(target, st, dir)...)
-	markStarted(st, dir)
+	injected := injectionArgs(target, st, dir)
+	args = append(args, injected...)
+	r.pendingHandoff = r.armHandoff(st, dir, injected)
 
 	return args, sessionIDOut, resumed, st
 }

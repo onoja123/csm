@@ -127,6 +127,12 @@ func TestClaudeToCodexHandoff(t *testing.T) {
 		t.Fatalf("git changed: %q → %q", res.gitBefore, res.gitAfter)
 	}
 
+	var st handoff.State
+
+	if err := json.Unmarshal([]byte(res.files["handoff-json"]), &st); err != nil || st.Outcome == nil || st.Outcome.Status != handoff.OutcomeComplete || !st.Outcome.Started || st.Outcome.ProjectDir == "" || st.Git.Head == "" {
+		t.Fatalf("outcome = %+v head=%q %v", st.Outcome, st.Git.Head, err)
+	}
+
 	if res.checkpoint.Account != "alpha" || res.checkpoint.Reason != provider.StopReasonManualSwitch {
 		t.Fatalf("checkpoint = %+v", res.checkpoint)
 	}
@@ -180,6 +186,12 @@ func TestClaudeToGeminiAndCopilotHandoff(t *testing.T) {
 
 			if res.active != "work-"+target || !strings.Contains(transcript, "You are continuing a coding task") || !strings.Contains(transcript, "handoff.md") {
 				t.Fatalf("active=%s transcript=%s\n%s", res.active, transcript, res.output)
+			}
+
+			var st handoff.State
+
+			if err := json.Unmarshal([]byte(res.files["handoff-json"]), &st); err != nil || st.Outcome == nil || !st.Outcome.Started || st.Outcome.Delivery != handoff.DeliveryInstruction || st.Outcome.Status != handoff.OutcomePartial {
+				t.Fatalf("no session context was read, so the outcome must be partial: %+v %v", st.Outcome, err)
 			}
 		})
 	}

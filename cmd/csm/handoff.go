@@ -47,21 +47,18 @@ func (r *runner) buildHandoff(source provider.Provider, from *Account, sessionID
 	}
 
 	dir := filepath.Join(root, st.ID)
-	contextOK := false
+	saved, haveSaved := r.savedCheckpoint(root, sessionID)
+	var contextOK bool
 
-	if extractor, ok := provider.Extractor(source); ok && sessionID != "" {
-		ctx, err := extractor.SessionContext(from.ConfigDir, r.cwd, sessionID)
+	st.Context, contextOK = extractContext(source, from, r.cwd, sessionID)
 
-		if err != nil {
-			slog.Debug("extract session context", "account", from.Name, "err", err)
-			ctx.Note = "The previous agent's session could not be read, so only the repository state is known."
-		} else {
-			contextOK = !ctx.Empty()
+	if haveSaved {
+		st.Checkpoint = saved.ID
+		st.Edits = saved.Edits
+
+		if !contextOK && !saved.Context.Empty() {
+			st.Context, contextOK = saved.Context, true
 		}
-
-		st.Context = handoff.Clean(ctx)
-	} else if sessionID == "" {
-		st.Context.Note = "No session was recorded for the previous agent."
 	}
 
 	st.Stage = handoff.StageContextExtracted
@@ -75,6 +72,29 @@ func (r *runner) buildHandoff(source provider.Provider, from *Account, sessionID
 	rep := r.prepareMCP(source, from, target)
 	st.MCP = rep.Results
 	st.Stage = handoff.StageMCPPrepared
+
+	reference := *st
+
+	if haveSaved {
+		reference = saved
+	}
+
+	out := &handoff.Outcome{Status: handoff.OutcomeStarting, Delivery: handoff.DeliveryNone, Verification: handoff.Verify(reference, r.cwd, now)}
+
+	if !contextOK && st.Edits == nil {
+		out.Problems = append(out.Problems, "No task context could be read from the previous agent; only the repository state was handed over.")
+	}
+
+	if n := rep.Count(mcp.Failed); n > 0 {
+		out.Problems = append(out.Problems, fmt.Sprintf("%d MCP server(s) could not be carried over.", n))
+	}
+
+	out.Problems = append(out.Problems, out.Verification.Problems()...)
+	st.Outcome = out
+
+	if haveSaved {
+		r.step("Checking the repository against checkpoint "+saved.ID, out.Verification.Clean())
+	}
 
 	if err := handoff.Write(dir, st, diff); err != nil {
 		slog.Debug("write handoff", "err", err)
@@ -134,22 +154,58 @@ func injectionArgs(target handoffTarget, st *handoff.State, dir string) []string
 	return injector.HandoffArgs(target.features, handoff.Instruction(*st, filepath.Join(dir, handoff.FileMD)))
 }
 
-func markStarted(st *handoff.State, dir string) {
+// armHandoff records how the brief will reach the agent; the runner settles the outcome once the agent has been launched.
+func (r *runner) armHandoff(st *handoff.State, dir string, args []string) string {
 	if dir == "" {
-		return
+		return ""
 	}
 
-	st.Stage = handoff.StageTargetStarted
+	if st.Outcome == nil {
+		st.Outcome = &handoff.Outcome{Status: handoff.OutcomeStarting}
+	}
+
+	switch {
+	case len(args) > 0:
+		st.Outcome.Delivery = handoff.DeliveryInstruction
+	default:
+		st.Outcome.Delivery = handoff.DeliveryFileOnly
+		st.Outcome.Problems = append(st.Outcome.Problems, "This agent version takes no opening instruction; it has to be pointed at handoff.md by hand.")
+	}
 
 	if err := handoff.Save(dir, st); err != nil {
 		slog.Debug("save handoff stage", "err", err)
 	}
+
+	return dir
+}
+
+// savedCheckpoint is the checkpoint a handoff continues: the one the user named, else the newest one saved from this session.
+func (r *runner) savedCheckpoint(root, sessionID string) (handoff.State, bool) {
+	if r.checkpointID != "" {
+		st, _, err := r.state.findHandoff(r.checkpointID)
+		r.checkpointID = ""
+
+		if err == nil && st.Kind == handoff.KindCheckpoint {
+			return st, true
+		}
+
+		slog.Debug("named checkpoint unusable", "err", err)
+	}
+
+	if sessionID == "" {
+		return handoff.State{}, false
+	}
+
+	st, _, err := handoff.LatestCheckpoint(root, sessionID)
+
+	return st, err == nil
 }
 
 // nextRun is what a cross-agent switch hands back to cmdRun: start this provider's runner with these arguments.
 type nextRun struct {
 	providerID string
 	args       []string
+	handoffDir string
 }
 
 func (r *runner) crossSwitch(from *Account, res outcome) (*nextRun, error) {
@@ -171,6 +227,7 @@ func (r *runner) crossSwitch(from *Account, res outcome) (*nextRun, error) {
 	r.log.Blank()
 	r.log.Info("Code Session Manager")
 	r.log.Blank()
+
 	r.log.Info("Switching %s (%s) → %s (%s).\n", from.Name, r.provider.Name(), target.Name, p.Name())
 	r.step("Saving checkpoint", true)
 	r.step("Stopping "+r.provider.Name(), true)
@@ -187,6 +244,7 @@ func (r *runner) crossSwitch(from *Account, res outcome) (*nextRun, error) {
 	r.step("Selecting "+target.Name, true)
 	t := handoffTarget{provider: p, features: features, account: target}
 	st, dir := r.buildHandoff(r.provider, from, res.sessionID, res.reason, t, false)
+
 	args := injectionArgs(t, st, dir)
 	r.step("Handing the task to "+p.Name(), len(args) > 0)
 	r.step("Starting "+p.Name()+" as "+target.Name, true)
@@ -203,9 +261,8 @@ func (r *runner) crossSwitch(from *Account, res outcome) (*nextRun, error) {
 
 	r.log.Blank()
 	r.printMCP(mcp.Report{Results: st.MCP})
-	markStarted(st, dir)
 
-	return &nextRun{providerID: p.ID(), args: args}, nil
+	return &nextRun{providerID: p.ID(), args: args, handoffDir: r.armHandoff(st, dir, args)}, nil
 }
 
 func (s *State) latestCheckpoint(projectDir string) (Checkpoint, bool) {
@@ -224,7 +281,7 @@ func (s *State) latestCheckpoint(projectDir string) (Checkpoint, bool) {
 }
 
 func handoffUsage() error {
-	return errors.New("usage: csm handoff [--yes] <account|number> | csm handoff [--yes] --provider " + strings.Join(provider.IDs, "|"))
+	return errors.New("usage: csm handoff [--yes] [--checkpoint <id>] <account|number> | csm handoff [--yes] [--checkpoint <id>] --provider " + strings.Join(provider.IDs, "|"))
 }
 
 func cmdHandoff(log *Logger, home string, args []string) (int, error) {
@@ -236,6 +293,7 @@ func cmdHandoff(log *Logger, home string, args []string) (int, error) {
 	var target *Account
 
 	yes := false
+	checkpointID := ""
 	args = slices.DeleteFunc(slices.Clone(args), func(a string) bool {
 		if a == "--yes" || a == "-y" {
 			yes = true
@@ -245,6 +303,29 @@ func cmdHandoff(log *Logger, home string, args []string) (int, error) {
 
 		return false
 	})
+
+	if i := slices.Index(args, "--checkpoint"); i >= 0 {
+		if i+1 >= len(args) {
+			return 1, handoffUsage()
+		}
+
+		checkpointID = args[i+1]
+		args = slices.Delete(args, i, i+2)
+	}
+
+	var saved handoff.State
+
+	if checkpointID != "" {
+		var err error
+
+		if saved, _, err = s.findHandoff(checkpointID); err != nil {
+			return 1, err
+		}
+
+		if saved.Kind != handoff.KindCheckpoint {
+			return 1, fmt.Errorf("%s is a handoff record, not a saved checkpoint", checkpointID)
+		}
+	}
 
 	switch {
 	case len(args) == 2 && args[0] == "--provider":
@@ -292,6 +373,11 @@ func cmdHandoff(log *Logger, home string, args []string) (int, error) {
 	}
 
 	proj := detectProject(cwd)
+
+	if checkpointID != "" && saved.Git.Root != "" && detectProject(saved.Git.Root).Dir != proj.Dir {
+		return 1, fmt.Errorf("checkpoint %s belongs to %s; run this from that project", checkpointID, displayPath(saved.Git.Root))
+	}
+
 	interactive := isTerminal(os.Stdin.Fd()) && !yes
 	sess, live, err := findManagedSession(s, "")
 
@@ -318,16 +404,27 @@ func cmdHandoff(log *Logger, home string, args []string) (int, error) {
 
 		log.Row("Task context", "captured at the switch")
 		log.Row("Git state", "captured at the switch")
+
+		if checkpointID != "" {
+			log.Row("Checkpoint", checkpointID)
+		}
+
 		log.Blank()
 
 		if interactive && !confirmLine(log, fmt.Sprintf("Continue with %s? [Y/n] ", p.Name())) {
 			return 0, nil
 		}
 
-		return 0, requestSwitch(log, s, sess, target.Name)
+		return 0, requestSwitchWith(log, s, sess, target.Name, checkpointID)
 	}
 
 	cp, found := s.latestCheckpoint(proj.Dir)
+
+	if checkpointID != "" && saved.Source.Account != "" {
+		cp = Checkpoint{Provider: saved.Source.Provider, Account: saved.Source.Account, SessionID: saved.Source.SessionID, ProjectDir: proj.Dir, CheckpointedAt: saved.CreatedAt}
+		found = true
+	}
+
 	var source provider.Provider
 	var from *Account
 
@@ -348,7 +445,14 @@ func cmdHandoff(log *Logger, home string, args []string) (int, error) {
 	}
 
 	log.Row("Target agent", p.Name()+" / "+target.Name)
-	log.Row("Task context", map[bool]string{true: "from the last checkpoint", false: "none; repository state only"}[from != nil && cp.SessionID != ""])
+
+	switch {
+	case checkpointID != "":
+		log.Row("Task context", "from checkpoint "+checkpointID)
+	default:
+		log.Row("Task context", map[bool]string{true: "from the last checkpoint", false: "none; repository state only"}[from != nil && cp.SessionID != ""])
+	}
+
 	log.Row("Git state", map[bool]string{true: proj.Branch, false: "not a git repository"}[proj.IsGit])
 	log.Blank()
 
@@ -373,6 +477,8 @@ func cmdHandoff(log *Logger, home string, args []string) (int, error) {
 	t := handoffTarget{provider: p, features: r.features, account: target}
 	var runArgs []string
 
+	r.checkpointID = checkpointID
+
 	if from != nil {
 		st, dir := r.buildHandoff(source, from, cp.SessionID, provider.StopReasonManualSwitch, t, false)
 		runArgs = injectionArgs(t, st, dir)
@@ -382,12 +488,12 @@ func cmdHandoff(log *Logger, home string, args []string) (int, error) {
 			log.Info("Handoff: %s\n", filepath.Join(dir, handoff.FileMD))
 		}
 
-		markStarted(st, dir)
+		r.pendingHandoff = r.armHandoff(st, dir, runArgs)
 	} else {
 		st, dir := r.buildHandoff(p, &Account{Name: "none", Provider: p.ID()}, "", provider.StopReasonManualSwitch, t, false)
 		st.Source = handoff.Agent{}
 		runArgs = injectionArgs(t, st, dir)
-		markStarted(st, dir)
+		r.pendingHandoff = r.armHandoff(st, dir, runArgs)
 	}
 
 	code, _, err := r.run(runArgs)

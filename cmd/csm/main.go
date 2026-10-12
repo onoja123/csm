@@ -44,6 +44,8 @@ Commands:
   gemini [args...]         Run Gemini CLI under the active Gemini CLI account
   copilot [args...]        Run GitHub Copilot CLI under the active Copilot account
   handoff <account>        Move the current task to another account, even of another agent
+                           (--checkpoint <id> continues a saved checkpoint)
+  checkpoint               Save the current task's context without switching (list|show|edit)
                            (--provider codex|gemini|copilot|claude for that agent's active account)
   test failover [codex]    Simulate a failover with a fake agent (no real usage)
   serve [--detach]         Run the local service the CSM apps connect to (stop|status|pair)
@@ -164,6 +166,9 @@ func run(args []string) int {
 
 	case "handoff":
 		code, err = cmdHandoff(log, home, rest)
+
+	case "checkpoint":
+		err = cmdCheckpoint(log, home, rest)
 
 	case "serve":
 		err = cmdServe(log, home, rest)
