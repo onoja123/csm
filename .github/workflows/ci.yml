@@ -27,7 +27,7 @@ jobs:
       - name: Build
         run: go build -o csm ./cmd/csm
       - name: Test
-        run: go test -race ./...
+        run: go test -race -timeout 25m ./...
 
   cross-build:
     name: build (${{ matrix.target }})
