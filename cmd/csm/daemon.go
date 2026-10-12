@@ -43,6 +43,7 @@ type providerInfo struct {
 	Installed bool   `json:"installed"`
 	Version   string `json:"version,omitempty"`
 	Error     string `json:"error,omitempty"`
+	Resume    bool   `json:"resume"`
 }
 
 type daemon struct {
@@ -186,6 +187,10 @@ func (d *daemon) probeProviders() []providerInfo {
 		if err == nil {
 			info.Installed = true
 			info.Version, err = p.Version()
+
+			if f, ferr := p.Features(); ferr == nil {
+				info.Resume = f.Resume
+			}
 		}
 
 		if err != nil {
