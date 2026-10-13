@@ -58,7 +58,8 @@ Commands:
   build watch|approve|finish|retry|cancel <id>  Follow a run, or act on it through csm serve
   serve [--detach]         Run the local service the CSM apps connect to (stop|status|pair)
                            (--listen HOST:PORT also accepts token-authenticated devices on the network)
-  version                  Print version information`
+  version                  Print version information
+  help                     Show this list (csm on its own shows your setup)`
 
 // version is overridden at build time with -ldflags "-X main.version=...".
 var version = "0.1.0"
@@ -112,6 +113,12 @@ func run(args []string) int {
 
 	args = fs.Args()
 	if len(args) == 0 {
+		if home, err := csmHome(); err == nil && isTerminal(os.Stdout.Fd()) {
+			printBanner(os.Stdout, home)
+
+			return 0
+		}
+
 		log.Error("%s", usage)
 
 		return 2

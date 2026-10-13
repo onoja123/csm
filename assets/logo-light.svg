@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="300" height="96" viewBox="0 0 300 96">
+  <g transform="translate(0 -6) scale(0.85)">
+    <path d="M96 36 A42 42 0 1 0 96 96" fill="none" stroke="#0a0a0a" stroke-width="14" stroke-linecap="round"/>
+    <rect x="74" y="58" width="48" height="16" rx="8" fill="#d4d4d0"/>
+    <circle cx="114" cy="66" r="11" fill="#16a34a"/>
+  </g>
+  <text x="122" y="70" font-family="Geist, -apple-system, Helvetica, Arial, sans-serif" font-size="64" font-weight="700" letter-spacing="-3" fill="#0a0a0a">csm</text>
+</svg>
