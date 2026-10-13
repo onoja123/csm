@@ -318,7 +318,7 @@ func (m *runManager) byPID(pid int) (*agentRun, bool) {
 	defer m.mu.Unlock()
 
 	for _, r := range m.runs {
-		if r.CSMPID == pid && r.Status == runStatusLive {
+		if status, _ := r.exitState(); r.CSMPID == pid && status == runStatusLive {
 			return r, true
 		}
 	}
@@ -331,7 +331,7 @@ func (m *runManager) liveFor(providerID, projectDir string) (*agentRun, bool) {
 	defer m.mu.Unlock()
 
 	for _, r := range m.runs {
-		if r.Status == runStatusLive && r.Provider == providerID && (projectDir == "" || r.ProjectDir == projectDir) {
+		if status, _ := r.exitState(); status == runStatusLive && r.Provider == providerID && (projectDir == "" || r.ProjectDir == projectDir) {
 			return r, true
 		}
 	}
@@ -371,7 +371,7 @@ func (m *runManager) forget(id string) error {
 		return errors.New("no such run")
 	}
 
-	if r.Status == runStatusLive {
+	if status, _ := r.exitState(); status == runStatusLive {
 		return errors.New("the run is still live; stop it first")
 	}
 
@@ -382,7 +382,7 @@ func (m *runManager) forget(id string) error {
 }
 
 func (r *agentRun) write(data []byte) error {
-	if r.Status != runStatusLive {
+	if status, _ := r.exitState(); status != runStatusLive {
 		return errors.New("the run has exited")
 	}
 
@@ -392,7 +392,7 @@ func (r *agentRun) write(data []byte) error {
 }
 
 func (r *agentRun) resize(cols, rows int) error {
-	if r.Status != runStatusLive || cols <= 0 || rows <= 0 {
+	if status, _ := r.exitState(); status != runStatusLive || cols <= 0 || rows <= 0 {
 		return nil
 	}
 
@@ -497,7 +497,7 @@ func (m *runManager) stopAll(grace time.Duration) {
 		live := false
 
 		for _, r := range m.list() {
-			if r.Status == runStatusLive {
+			if status, _ := r.exitState(); status == runStatusLive {
 				live = true
 			}
 		}
