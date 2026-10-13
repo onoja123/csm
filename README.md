@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg">
+  <img alt="csm" src="assets/logo-light.svg" width="220">
+</picture>
+
 # csm
 
 Run several accounts of the same coding agent on one machine and switch between them without logging out.
@@ -96,6 +101,7 @@ Arguments are passed to the agent. It runs in your terminal as usual.
 csm use <name|number>    # make an account active
 csm next [provider]      # move to the next account in priority order
 csm status               # project, accounts, running session, last checkpoint
+csm                      # in a terminal: the logo, active accounts, service and Sentry at a glance
 ```
 
 If a `csm` session is running, `use` and `next` switch it: `csm` saves a checkpoint, stops the agent, and restarts it under the new account with the same conversation and its MCP servers (see [MCP failover](#mcp-failover)). Otherwise they change which account the next run uses.
