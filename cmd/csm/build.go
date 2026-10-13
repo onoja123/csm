@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/onoja123/csm/engrun"
 	"github.com/onoja123/csm/internal/provider"
 )
 
@@ -49,10 +50,14 @@ const (
 	BuildFailed         BuildStatus = "failed"
 	BuildCancelled      BuildStatus = "cancelled"
 	BuildNeedsAttention BuildStatus = "needs_attention"
+	BuildInvestigating  BuildStatus = "investigating"
+	BuildReproducing    BuildStatus = "reproducing"
 )
 
 var buildTransitions = map[BuildStatus][]BuildStatus{
-	BuildDraft:          {BuildPlanning, BuildAwaitingPlan, BuildCancelled, BuildFailed},
+	BuildDraft:          {BuildPlanning, BuildAwaitingPlan, BuildInvestigating, BuildNeedsAttention, BuildCancelled, BuildFailed},
+	BuildInvestigating:  {BuildReproducing, BuildRunning, BuildNeedsAttention, BuildCancelled, BuildFailed},
+	BuildReproducing:    {BuildRunning, BuildNeedsAttention, BuildCancelled, BuildFailed},
 	BuildPlanning:       {BuildAwaitingPlan, BuildReady, BuildNeedsAttention, BuildCancelled, BuildFailed},
 	BuildAwaitingPlan:   {BuildReady, BuildPlanning, BuildCancelled},
 	BuildReady:          {BuildRunning, BuildCancelled, BuildNeedsAttention},
@@ -62,7 +67,7 @@ var buildTransitions = map[BuildStatus][]BuildStatus{
 	BuildReviewing:      {BuildFixing, BuildAwaitingFinal, BuildNeedsAttention, BuildCancelled, BuildFailed},
 	BuildFixing:         {BuildIntegrating, BuildNeedsAttention, BuildCancelled, BuildFailed},
 	BuildAwaitingFinal:  {BuildCompleted, BuildNeedsAttention, BuildCancelled},
-	BuildNeedsAttention: {BuildPlanning, BuildAwaitingPlan, BuildRunning, BuildIntegrating, BuildValidating, BuildReviewing, BuildFixing, BuildAwaitingFinal, BuildCancelled, BuildFailed},
+	BuildNeedsAttention: {BuildPlanning, BuildAwaitingPlan, BuildInvestigating, BuildReproducing, BuildRunning, BuildIntegrating, BuildValidating, BuildReviewing, BuildFixing, BuildAwaitingFinal, BuildCancelled, BuildFailed},
 }
 
 func (s BuildStatus) Terminal() bool {
@@ -89,11 +94,12 @@ const (
 )
 
 const (
-	RolePlan      = "plan"
-	RoleImplement = "implement"
-	RoleFix       = "fix"
-	RoleResolve   = "resolve"
-	RoleReview    = "review"
+	RolePlan        = "plan"
+	RoleImplement   = "implement"
+	RoleFix         = "fix"
+	RoleResolve     = "resolve"
+	RoleReview      = "review"
+	RoleInvestigate = "investigate"
 )
 
 const (
@@ -127,6 +133,9 @@ type BuildPolicy struct {
 	Checks              []CheckDef `json:"checks,omitempty"`
 	RunBaseline         bool       `json:"run_baseline"`
 	AllowRemote         bool       `json:"allow_remote"`
+	// Sandbox runs checks and reproductions in a container instead of on the host; AutoFix runs always set it.
+	Sandbox      bool `json:"sandbox,omitempty"`
+	AllowNetwork bool `json:"allow_network,omitempty"`
 }
 
 type CheckDef struct {
@@ -172,6 +181,8 @@ type BuildTask struct {
 	Order      int           `json:"order"`
 	Integrated bool          `json:"integrated,omitempty"`
 	Switches   []AgentSwitch `json:"switches,omitempty"`
+	// BaseRef starts the task's worktree somewhere other than the run's base, such as the commit holding a regression test.
+	BaseRef string `json:"base_ref,omitempty"`
 }
 
 type Attempt struct {
@@ -351,6 +362,15 @@ type Build struct {
 	Error       string        `json:"error,omitempty"`
 	Seq         int           `json:"seq"`
 	Dirty       bool          `json:"source_dirty,omitempty"`
+	// Kind is "autofix" for a run started by an engineering signal; Build Room tasks leave it empty.
+	Kind          string         `json:"kind,omitempty"`
+	Signal        *engrun.Signal `json:"signal,omitempty"`
+	IncidentID    string         `json:"incident_id,omitempty"`
+	Investigation *Investigation `json:"investigation,omitempty"`
+	Verification  *Verification  `json:"verification,omitempty"`
+	Hub           *HubLink       `json:"hub,omitempty"`
+	// StateLog is every lifecycle state the run has been in, so a client that syncs late still sees each step.
+	StateLog []engrun.State `json:"state_log,omitempty"`
 }
 
 type BuildEvent struct {
@@ -758,13 +778,18 @@ type buildSummary struct {
 	Failed      int         `json:"tasks_failed"`
 	Agents      []string    `json:"agents"`
 	PRURL       string      `json:"pr_url,omitempty"`
+	Kind        string      `json:"kind,omitempty"`
+	Severity    string      `json:"severity,omitempty"`
+	Source      string      `json:"source,omitempty"`
+	Verdict     string      `json:"verdict,omitempty"`
+	State       string      `json:"state"`
 	CreatedAt   time.Time   `json:"created_at"`
 	UpdatedAt   time.Time   `json:"updated_at"`
 	CompletedAt time.Time   `json:"completed_at,omitzero"`
 }
 
 func (b *Build) summary() buildSummary {
-	s := buildSummary{ID: b.ID, Title: b.Title, Instruction: b.Instruction, Repo: b.Repo, RepoName: b.RepoName, BaseBranch: b.BaseBranch, Status: b.Status, Paused: b.Paused, Attention: b.Attention, PRURL: b.PR.URL, CreatedAt: b.CreatedAt, UpdatedAt: b.UpdatedAt, CompletedAt: b.CompletedAt, Agents: []string{}}
+	s := buildSummary{Kind: b.Kind, State: string(engrunState(b)), ID: b.ID, Title: b.Title, Instruction: b.Instruction, Repo: b.Repo, RepoName: b.RepoName, BaseBranch: b.BaseBranch, Status: b.Status, Paused: b.Paused, Attention: b.Attention, PRURL: b.PR.URL, CreatedAt: b.CreatedAt, UpdatedAt: b.UpdatedAt, CompletedAt: b.CompletedAt, Agents: []string{}}
 
 	for _, t := range b.Tasks {
 		s.Tasks++
@@ -783,6 +808,13 @@ func (b *Build) summary() buildSummary {
 		}
 	}
 
+	if b.Signal != nil {
+		s.Severity, s.Source = b.Signal.Severity, b.Signal.Source
+	}
+
+	if b.Verification != nil {
+		s.Verdict = string(b.Verification.Verdict)
+	}
 	return s
 }
 

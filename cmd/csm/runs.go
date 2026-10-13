@@ -166,7 +166,7 @@ func childEnv() []string {
 	var env []string
 
 	for _, kv := range os.Environ() {
-		if strings.HasPrefix(kv, "CLAUDE_CODE_") || strings.HasPrefix(kv, "CLAUDECODE=") || strings.HasPrefix(kv, "CSM_SOCKET=") || strings.HasPrefix(kv, "CSM_HOME=") || strings.HasPrefix(kv, "CSM_BUILD_") || strings.HasPrefix(kv, "CSM_TASK_REPORT=") {
+		if strings.HasPrefix(kv, "CLAUDE_CODE_") || strings.HasPrefix(kv, "CLAUDECODE=") || strings.HasPrefix(kv, "CSM_SOCKET=") || strings.HasPrefix(kv, "CSM_HOME=") || strings.HasPrefix(kv, "CSM_BUILD_") || strings.HasPrefix(kv, "CSM_TASK_REPORT=") || strings.HasPrefix(kv, "CSM_HUB_TOKEN=") || strings.HasPrefix(kv, "SENTRY_AUTH_TOKEN=") {
 			continue
 		}
 

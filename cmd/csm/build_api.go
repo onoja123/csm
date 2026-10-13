@@ -573,6 +573,8 @@ func (e *buildEngine) apply(b *Build, action string, req actionRequest) error {
 		}
 
 		switch {
+		case len(b.Tasks) == 0 && b.autofix():
+			e.startInvestigation(b)
 		case len(b.Tasks) == 0:
 			e.startPlanning(b)
 		case !b.allDone(""):
@@ -582,6 +584,31 @@ func (e *buildEngine) apply(b *Build, action string, req actionRequest) error {
 		default:
 			e.setStatus(b, BuildValidating)
 		}
+
+	case "retry-investigation":
+		if !b.autofix() || b.Status != BuildNeedsAttention || !slices.Contains(b.Recovery, "retry_investigation") {
+			return errActionState
+		}
+
+		b.Investigation.Classification, b.Investigation.Test = "", nil
+		e.event(b, "investigation.retry", "", "You asked for a new investigation")
+		e.startInvestigation(b)
+
+	case "retry-reproduction":
+		if !b.autofix() || b.Status != BuildNeedsAttention || !slices.Contains(b.Recovery, "retry_reproduction") {
+			return errActionState
+		}
+
+		e.setStatus(b, BuildReproducing)
+		e.event(b, "reproduction.retry", "", "You asked CSM to run the reproduction again")
+
+	case "continue-unreproduced":
+		if !b.autofix() || b.Status != BuildNeedsAttention || !slices.Contains(b.Recovery, "continue_unreproduced") {
+			return errActionState
+		}
+
+		e.event(b, "reproduction.waived", "", "You chose to continue without a reproduced failure; the result can only be 'tests passed, reproduction unconfirmed'")
+		e.startFixTask(b)
 
 	case "approve-pr":
 		if b.Status != BuildAwaitingFinal || b.PR.State != "prepared" {

@@ -121,6 +121,8 @@ func cmdServe(log *Logger, home string, args []string) error {
 
 	d.builds.start()
 
+	go d.hub.loop(ctx)
+
 	errs := make(chan error, 2)
 	go func() { errs <- srv.Serve(ln) }()
 

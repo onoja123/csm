@@ -56,6 +56,8 @@ type daemon struct {
 	runs      *runManager
 	approvals *approvalQueue
 	builds    *buildEngine
+	signals   *signalStore
+	hub       *hubRunner
 
 	mu        sync.Mutex
 	settings  desktopSettings
@@ -69,6 +71,8 @@ func newDaemon(home, csmPath, version string) (*daemon, error) {
 	d := &daemon{home: home, csmPath: csmPath, version: version, startedAt: time.Now(), bus: bus, log: log, approvals: newApprovalQueue(bus, log)}
 	d.runs = newRunManager(home, csmPath, bus, log)
 	d.builds = newBuildEngine(home, d.runs, log, bus)
+	d.signals = newSignalStore(home)
+	d.hub = &hubRunner{d: d}
 	readJSON(filepath.Join(home, desktopSettingsFile), &d.settings)
 
 	return d, nil
@@ -154,6 +158,19 @@ func (d *daemon) handler() http.Handler {
 	mux.HandleFunc("GET /v1/builds/{id}/diff", d.getBuildDiff)
 	mux.HandleFunc("PUT /v1/builds/{id}/plan", d.putBuildPlan)
 	mux.HandleFunc("POST /v1/builds/{id}/actions/{action}", d.postBuildAction)
+	mux.HandleFunc("GET /v1/signals", d.getSignals)
+	mux.HandleFunc("POST /v1/signals", d.postSignal)
+	mux.HandleFunc("POST /v1/signals/sentry", d.postSentrySignal)
+	mux.HandleFunc("POST /v1/incidents/{id}/runs", d.postIncidentRun)
+	mux.HandleFunc("GET /v1/autofix", d.getAutofixConfig)
+	mux.HandleFunc("PUT /v1/autofix", d.putAutofixConfig)
+	mux.HandleFunc("POST /v1/autofix/hub/signin", d.postHubSignin)
+	mux.HandleFunc("POST /v1/autofix/hub/signout", d.postHubSignout)
+	mux.HandleFunc("POST /v1/autofix/hub/setup", d.postHubSetup)
+	mux.HandleFunc("PUT /v1/autofix/hub/secret", d.putHubSecret)
+	mux.HandleFunc("GET /v1/autofix/hub/status", d.getHubStatus)
+	mux.HandleFunc("POST /v1/autofix/hub/test", d.postHubTest)
+	mux.HandleFunc("POST /v1/sentry/fix", d.postSentryFix)
 	mux.HandleFunc("GET /v1/mcp", d.getMCP)
 	mux.HandleFunc("GET /v1/approvals", d.getApprovals)
 	mux.HandleFunc("POST /v1/approvals/{id}/decision", d.decideApproval)
