@@ -465,6 +465,100 @@ Runs survive restarts: the service reloads them, an agent whose report arrived b
 
 **Limitations.** The planner, implementers and reviewer are the agents themselves: their plans and code can be wrong, and an agent approval is not a guarantee. Claude Code in a resumed session after an account switch gets its instruction as an opening prompt; other agents receive it the way each CLI supports. JavaScript checks reuse the repository's installed `node_modules` through a symlink when git ignores it; nothing is installed. Worktrees and branches are not deleted automatically.
 
+## AutoFix
+
+AutoFix is the other way into the same engine as Build Room: instead of a developer's request, an engineering signal
+starts the run. The first supported signal is a Sentry error.
+
+```
+signed Sentry webhook → incident (deduplicated) → engineering run
+  → investigation → reproduction in a sandbox → fix in an isolated worktree
+  → verification → independent review → pull request you approve
+```
+
+**From the terminal.** No Hub, no webhook and no public URL: CSM reads issues from Sentry's API with your own auth
+token (a personal token with `org:read`, `project:read` and `event:read`).
+
+```
+cd ~/code/orders-api
+csm sentry connect          # paste the token (hidden), pick the organization and project; maps it to this repository
+csm issues                  # unresolved issues: id, events, users, last seen, and CSM's run for each
+csm fix ORDERS-API-3F       # pull the latest event and run AutoFix, following it live; Ctrl+C detaches
+csm build show <id>         # the change, the checks and the review
+csm build approve <id>      # push the branch and open the pull request (or: finish, retry, cancel, watch)
+```
+
+Nothing starts until you run `csm fix`, so a backlog of issues never turns into a pile of agent runs. `csm fix` starts
+`csm serve` in the background when it is not running; the run lives there and continues if you stop following it. The
+token is stored in `~/.csm/autofix.json` (0600), sent only to the Sentry host you connected, and removed from every
+agent's environment. `--url` connects a self-hosted or regional Sentry (`https://de.sentry.io`). The evidence is
+redacted exactly like a webhook's, and an issue pulled here and delivered by a webhook later are the same incident.
+
+**Connecting Sentry for a team.** In CSM Desktop, open **AutoFix → Settings → Connect Sentry**:
+
+1. Sign in to CSM Hub (or create an account). The password goes to the Hub only; CSM keeps the session in memory.
+2. Choose the workspace, the Sentry project slug and the repository on this Mac. CSM creates the Hub's Sentry
+   integration (or reuses it), maps the project to the repository, issues a runner token for this machine and connects
+   it, then shows the **webhook URL**.
+3. In Sentry: **Settings → Developer Settings → Custom Integrations → Create New Integration → Internal Integration**.
+   Paste the webhook URL, give **Issue & Event** read access, tick the **issue** and **error** webhooks and save.
+4. Paste the integration's **Client Secret** back into CSM, and press **Send a test**. The test is signed with that
+   secret and marked as a test, so Hub verifies it and creates nothing.
+
+The panel then reports what Hub saw last: events arriving, a signature that does not match the secret, deliveries before
+the secret was set, or nothing yet. The Hub must be on a public HTTPS address for Sentry to reach it; CSM warns when it is
+not. The same steps are available over the service API (`POST /v1/autofix/hub/signin`, `POST /v1/autofix/hub/setup`,
+`PUT /v1/autofix/hub/secret`, `GET /v1/autofix/hub/status`, `POST /v1/autofix/hub/test`), and `csm hub connect` still
+connects with a token an admin issued. `csm hub setup` walks through the same steps in the terminal.
+
+**Where it runs.** Signals reach CSM in one of two ways:
+
+- Directly: `csm serve` accepts `POST /v1/signals/sentry` with Sentry's signature, using the secret set under AutoFix →
+  Settings. Only reachable on the local socket or with the network token.
+- Through **CSM Hub**, the hosted service in the AutoFixer repository: Hub receives the webhook while your machine is
+  off, deduplicates it into an incident and queues a run. `csm hub connect <url> --token <runner token>` makes this
+  machine a runner: it leases runs for the projects mapped here, executes them, and reports every state and event back.
+  A lease that stops being renewed returns the run to the queue.
+
+Each signal is normalized into one envelope (`engrun.Signal`, shared with Hub) with source-specific evidence kept typed:
+exception chain, frames marked in-app, tags, counts, environment, release. Emails, tokens, query strings, user tags and
+credential-looking values are redacted before anything is stored or shown, and the raw payload is never kept. Recurring
+events of the same defect share a fingerprint and attach to one incident: only a new incident starts a run, and a
+project with no repository mapped starts nothing. Intake is rate-limited per source.
+
+**The run.**
+
+1. **Investigate.** An agent reads the code the evidence points to and classifies the signal: code defect, environment,
+   dependency, insufficient evidence or unsafe change. Anything but a code defect stops for a person; no speculative fix
+   is attempted. For a defect it writes one regression test. Evidence is fenced as untrusted data in every brief, so text
+   in an error message cannot instruct an agent.
+2. **Reproduce.** CSM commits only the declared test files, builds the command itself (`go test -run ^Name$ ./pkg` or
+   pytest; never a command an agent wrote), and runs it in the sandbox at the base commit. Only a run where that test
+   fails counts as reproduced. A passing test, a test that does not compile, a timeout or an unavailable sandbox is
+   recorded as such, and the run waits: retry, re-investigate, or continue knowing the result can never be "verified".
+3. **Fix.** One task in its own worktree, starting from the commit holding the regression test, through the normal
+   runner: account failover, automatic Context Handoff and approvals apply. The brief carries the evidence, the
+   investigation (marked as an agent's analysis) and only the reproduction facts CSM recorded.
+4. **Verify.** The repository's own checks run on the base and on the result, and the regression test runs again, all in
+   the sandbox. CSM also checks that the fix did not change the regression test. The verdict is **fixed and verified**
+   only when the failure reproduced before, is gone after, the test is untouched and no check newly fails; a green suite
+   without a reproduction is reported as **tests passed, reproduction unconfirmed**. A test that still fails, or a fix
+   that edited the test, becomes a blocking finding for a bounded fix round.
+5. **Review and PR.** As in Build Room: a different agent reviews the diff against the evidence; the pull request
+   description states the signal, the suspected defect, the reproduction, what CSM measured, the review and the
+   limitations, without the source link or raw payload. Pushing waits for your approval.
+
+**The sandbox.** A fresh Docker container per command: no network, all capabilities dropped, no privilege escalation,
+read-only root with a writable `/tmp`, the host user's uid, 2 CPUs, 2 GB, 512 processes and a time limit. Only the run's
+worktree, a per-run build cache and read-only dependency caches are mounted; never credentials, the CSM home or the
+Docker socket. Docker shares the host kernel, so this limits accidents and casual escapes, not a determined attacker
+with a kernel exploit. On macOS, Docker Desktop cannot mount folders under Documents, Desktop or Downloads; keep CSM's
+home (`~/.csm` by default) elsewhere.
+
+**Limitations.** Sentry is the only signal source so far; the envelope has a CI evidence type ready, with no intake yet.
+Reproduction runs Go and pytest tests. Hub runs execute only on a runner whose user has signed-in agents. Diffs and
+check output stay on the runner; Hub holds states and events.
+
 ## MCP failover
 
 MCP servers are configured per agent profile, so a fresh profile would start without them. When `csm` switches accounts it carries the MCP *configuration* along. It distinguishes four things:

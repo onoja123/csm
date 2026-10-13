@@ -16,6 +16,7 @@ import (
 
 	"github.com/onoja123/csm/internal/handoff"
 	"github.com/onoja123/csm/internal/provider"
+	"github.com/onoja123/csm/internal/sandbox"
 )
 
 const (
@@ -45,12 +46,14 @@ type buildEngine struct {
 	ops    map[string]map[string]bool
 	wake   chan struct{}
 	done   chan struct{}
-	closed bool
-	wg     sync.WaitGroup
+	// sandbox runs AutoFix reproductions and checks; tests replace it with a deterministic runner.
+	sandbox sandbox.Runner
+	closed  bool
+	wg      sync.WaitGroup
 }
 
 func newBuildEngine(home string, runs *runManager, log *activityLog, bus *eventBus) *buildEngine {
-	e := &buildEngine{store: newBuildStore(home), home: home, builds: map[string]*Build{}, runs: runs, log: log, bus: bus, ops: map[string]map[string]bool{}, wake: make(chan struct{}, 1), done: make(chan struct{})}
+	e := &buildEngine{store: newBuildStore(home), home: home, builds: map[string]*Build{}, runs: runs, log: log, bus: bus, ops: map[string]map[string]bool{}, wake: make(chan struct{}, 1), done: make(chan struct{}), sandbox: sandbox.Docker{}}
 
 	for _, b := range e.store.all() {
 		e.builds[b.ID] = b
@@ -193,6 +196,7 @@ func (e *buildEngine) setStatus(b *Build, to BuildStatus) bool {
 	}
 
 	slog.Debug("build status", "build", b.ID, "from", from, "to", to)
+	b.logState()
 
 	return true
 }
@@ -268,7 +272,13 @@ func (e *buildEngine) advance(b *Build) {
 
 	switch b.Status {
 	case BuildDraft:
-		e.startPlanning(b)
+		if b.autofix() {
+			e.startInvestigation(b)
+		} else {
+			e.startPlanning(b)
+		}
+	case BuildReproducing:
+		e.reproduce(b)
 	case BuildReady:
 		if e.setStatus(b, BuildRunning) {
 			b.StartedAt = time.Now()
@@ -678,6 +688,8 @@ func (e *buildEngine) finish(b *Build, a *Attempt) {
 	switch a.Role {
 	case RolePlan:
 		e.finishPlan(b, a)
+	case RoleInvestigate:
+		e.finishInvestigation(b, a)
 	case RoleImplement, RoleFix:
 		e.finishWork(b, a)
 	case RoleResolve:
@@ -855,6 +867,10 @@ func (e *buildEngine) taskProblem(b *Build, t *BuildTask, problem, recovery stri
 // prepareWorktree gives a task its own branch and worktree: an implementation task starts at the base commit with its dependencies merged in, a fix starts at the integrated result.
 func (e *buildEngine) prepareWorktree(b *Build, t *BuildTask) error {
 	path, branch, base := e.worktreePath(b, t.ID), b.branch(t.ID), b.BaseCommit
+
+	if t.BaseRef != "" {
+		base = t.BaseRef
+	}
 
 	if t.Kind == TaskKindFix {
 		if b.Integration.Head == "" {
@@ -1267,7 +1283,7 @@ func (e *buildEngine) baseline(b *Build) {
 		}
 	}
 
-	repo, base, path, checks := b.Repo, b.BaseCommit, e.worktreePath(b, "baseline"), slices.Clone(b.Policy.Checks)
+	repo, base, path, checks, check := b.Repo, b.BaseCommit, e.worktreePath(b, "baseline"), slices.Clone(b.Policy.Checks), e.checker(b)
 	e.event(b, "baseline.started", "", "Running the checks on the base commit to record existing failures")
 
 	e.async(b, opBaseline, func() func(*Build) {
@@ -1281,7 +1297,7 @@ func (e *buildEngine) baseline(b *Build) {
 			linkDependencies(repo, path)
 
 			for _, c := range checks {
-				results = append(results, runCheck(path, c, "baseline"))
+				results = append(results, check(path, c, "baseline"))
 			}
 		}
 
@@ -1313,7 +1329,14 @@ func (e *buildEngine) validate(b *Build) {
 	}
 
 	path, checks := b.Integration.Worktree, slices.Clone(b.Policy.Checks)
-	repo := b.Repo
+	repo, check := b.Repo, e.checker(b)
+
+	var verifyFix func() func(*Verification)
+
+	if b.autofix() {
+		verifyFix = e.verifyFix(b, path)
+		e.event(b, "verification.started", "", "Running the regression test and the repository's checks on the fix, in a sandbox")
+	}
 
 	e.async(b, opValidate, func() func(*Build) {
 		linkDependencies(repo, path)
@@ -1321,7 +1344,13 @@ func (e *buildEngine) validate(b *Build) {
 		var results []CheckResult
 
 		for _, c := range checks {
-			results = append(results, runCheck(path, c, "integration"))
+			results = append(results, check(path, c, "integration"))
+		}
+
+		var applyFix func(*Verification)
+
+		if verifyFix != nil {
+			applyFix = verifyFix()
 		}
 
 		if len(checks) == 0 {
@@ -1352,6 +1381,10 @@ func (e *buildEngine) validate(b *Build) {
 				if r.State == CheckFailed {
 					b.Findings = append(b.Findings, Finding{ID: b.nextID("f"), Cycle: round, Severity: "high", Title: "Check failed: " + r.Name, Explanation: tail(r.Output, 1500), Recommendation: "Make " + r.Name + " pass", Blocking: true, Status: findingOpen, Source: "CSM ran " + r.Name})
 				}
+			}
+
+			if applyFix != nil {
+				e.recordVerification(b, results, applyFix, round)
 			}
 
 			if b.Policy.Review {
@@ -1585,6 +1618,10 @@ func (e *buildEngine) preparePR(b *Build) {
 
 	b.PR.State = "preparing"
 	body := prBody(b)
+
+	if b.autofix() {
+		body = autofixPRBody(b)
+	}
 	path := filepath.Join(e.store.dir(b.ID), "pr.md")
 	repo, branch := b.Repo, b.Integration.Branch
 	title := prTitle(b)

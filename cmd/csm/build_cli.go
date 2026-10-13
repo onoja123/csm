@@ -14,7 +14,7 @@ func cmdBuild(log *Logger, home string, args []string) error {
 		runs := store.all()
 
 		if len(runs) == 0 {
-			log.Info("No Build Room runs yet. Start one from the CSM app.")
+			log.Info("No runs yet. Start a Build Room run from the CSM app, or fix a Sentry issue with csm fix.")
 
 			return nil
 		}
@@ -27,8 +27,12 @@ func cmdBuild(log *Logger, home string, args []string) error {
 		return nil
 	}
 
+	if _, ok := buildActions[args[0]]; (ok || args[0] == "watch") && len(args) == 2 {
+		return cmdBuildAction(log, home, args[0], args[1])
+	}
+
 	if args[0] != "show" || len(args) != 2 {
-		return errors.New("usage: csm build list | csm build show <id>")
+		return errors.New("usage: csm build list | show <id> | watch <id> | approve <id> | finish <id> | retry <id> | cancel <id>")
 	}
 
 	b, err := store.load(args[1])

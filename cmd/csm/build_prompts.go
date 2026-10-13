@@ -18,6 +18,8 @@ const reportShapeWork = `{"summary": "what you changed", "files_changed": ["path
 
 const reportShapePlan = `{"summary": "one paragraph", "layers": ["modules involved"], "considerations": ["security, migration, API or compatibility notes"], "suggested_checks": ["commands"], "tasks": [{"id": "api", "title": "short title", "objective": "what the task delivers", "scope": "what is in and out of scope", "acceptance": ["criterion"], "context": "patterns and files to follow", "files": ["paths likely to change"], "depends_on": ["id of an earlier task"], "agent": "claude|codex|gemini|copilot or empty"}]}`
 
+const reportShapeInvestigate = `{"classification": "code_defect|environment|dependency|insufficient_evidence|unsafe_change", "summary": "what is failing and why, in two or three sentences", "root_cause": "the defect, with file and line", "evidence": ["what you checked: file:line and what it shows"], "files": ["files involved"], "fix_plan": "how to fix it", "confidence": "low|medium|high", "reproduction": {"language": "go|python", "package": "./path (go only)", "test": "TestName", "files": ["path/to/x_test.go"]}}`
+
 const reportShapeReview = `{"verdict": "approve or changes_requested", "summary": "overall assessment", "findings": [{"severity": "critical|high|medium|low|info", "file": "path", "line": 0, "title": "short", "explanation": "what is wrong", "reasoning": "how you know or how to reproduce", "recommendation": "the fix", "blocking": true}]}`
 
 func contractText(role, report string) string {
@@ -28,6 +30,8 @@ func contractText(role, report string) string {
 		shape = reportShapePlan
 	case RoleReview:
 		shape = reportShapeReview
+	case RoleInvestigate:
+		shape = reportShapeInvestigate
 	}
 
 	return fmt.Sprintf("CSM Build Room contract: when you have finished, write a JSON report to %s with this shape:\n%s\nWrite it only once, when the work is done; CSM reads it as your account of the work and checks the repository itself. Do not commit, push, open pull requests, switch branches, or run deployment or production migration commands; CSM records and integrates your changes.", report, shape)
@@ -82,6 +86,7 @@ func taskInstruction(b *Build, t *BuildTask, previous *Attempt) string {
 	}
 
 	fmt.Fprintf(&s, "\nWork only in %s (branch %s). Other tasks run in their own worktrees; stay within this task's scope.", t.Worktree, t.Branch)
+	s.WriteString(autofixContext(b))
 
 	if previous != nil {
 		fmt.Fprintf(&s, "\n\nA previous attempt by %s stopped before finishing (%s). Its changes are still in this worktree: run git status and git diff first, keep what is correct and continue. Never reset, clean or discard them.", agentLabel(previous.Provider, previous.Account), orDash(previous.Note))
@@ -126,6 +131,8 @@ func reviewInstruction(b *Build, dir string, independent bool) string {
 	}
 
 	s.WriteString("\nCheck the diff against the request and criteria, the repository's conventions, security, error handling, data integrity, API compatibility, tests and edge cases, regressions, and dependency or migration order. Mark a finding blocking only when it must be fixed before merging; style preferences are never blocking. Give a file and line where you can.")
+
+	s.WriteString(autofixContext(b))
 
 	if !independent {
 		s.WriteString(" Note: no different agent was available, so the same agent that wrote part of this change is reviewing it.")

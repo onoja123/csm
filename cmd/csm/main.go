@@ -49,7 +49,13 @@ Commands:
   checkpoint               Save the current task's context without switching (list|show|edit)
                            (--provider codex|gemini|copilot|claude for that agent's active account)
   test failover [codex]    Simulate a failover with a fake agent (no real usage)
-  build list|show <id>     Show Build Room runs; they are created and driven from the CSM app through csm serve
+  sentry connect           Connect this repository to a Sentry project with your auth token (status|disconnect)
+  issues                   List the connected projects' unresolved Sentry issues and CSM's runs for them
+  fix <issue>              Investigate, reproduce, fix and verify a Sentry issue, then wait for your approval
+  hub setup                Connect Sentry through CSM Hub for a team: workspace, webhook URL, client secret, test
+  hub connect <url> --token <t>  Run AutoFix jobs from CSM Hub on this machine (status|disconnect)
+  build list|show <id>     Show Build Room and AutoFix runs
+  build watch|approve|finish|retry|cancel <id>  Follow a run, or act on it through csm serve
   serve [--detach]         Run the local service the CSM apps connect to (stop|status|pair)
                            (--listen HOST:PORT also accepts token-authenticated devices on the network)
   version                  Print version information`
@@ -177,6 +183,18 @@ func run(args []string) int {
 
 	case "build", "builds":
 		err = cmdBuild(log, home, rest)
+
+	case "hub":
+		err = cmdHub(log, home, rest)
+
+	case "sentry":
+		err = cmdSentry(log, home, rest)
+
+	case "issues":
+		err = cmdIssues(log, home, rest)
+
+	case "fix":
+		err = cmdFix(log, home, rest)
 
 	case "test":
 		providerID := provider.ClaudeID
