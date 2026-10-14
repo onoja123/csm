@@ -75,6 +75,8 @@ func Find(id string) (Provider, error) {
 	return New(id, "")
 }
 
+const probeTimeout = 30 * time.Second
+
 // probeOutput runs an agent command with a throwaway profile, because some agents write to their home even for --version.
 func probeOutput(p Provider, args ...string) ([]byte, error) {
 	dir, err := os.MkdirTemp("", "csm-probe-")
@@ -85,10 +87,19 @@ func probeOutput(p Provider, args ...string) ([]byte, error) {
 
 	defer os.RemoveAll(dir)
 
-	cmd := exec.Command(p.Executable(), args...)
-	cmd.Env = p.Env(dir)
+	ctx, cancel := context.WithTimeout(context.Background(), probeTimeout)
+	defer cancel()
 
-	return cmd.Output()
+	cmd := exec.CommandContext(ctx, p.Executable(), args...)
+	cmd.Env = p.Env(dir)
+	cmd.WaitDelay = time.Second
+	out, err := cmd.Output()
+
+	if ctx.Err() != nil {
+		return out, fmt.Errorf("no answer within %s", probeTimeout)
+	}
+
+	return out, err
 }
 
 func checkAuthEnv(names []string) error {
