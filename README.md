@@ -17,8 +17,35 @@ Run several accounts of the same coding agent on one machine and switch between 
 | Codex | `csm codex` | yes | yes | yes |
 | Gemini CLI | `csm gemini` | yes | no | no |
 | GitHub Copilot CLI | `csm copilot` | yes | no | no |
+| Cursor CLI | `csm cursor` | no (one sign-in per user) | no | no |
 
-Accounts only switch with accounts of the same agent. Different agents can run in the same project at the same time.
+Accounts only switch with accounts of the same agent. Different agents can run in the same project at the same time, and a task can move between any two of them (see [Cross-agent handoff](#cross-agent-handoff)).
+
+### Cursor CLI
+
+Install Cursor's CLI with its official installer, then sign in through csm, which runs Cursor's own login:
+
+```bash
+curl https://cursor.com/install -fsS | bash   # installs `agent` (and the older name `cursor-agent`) in ~/.local/bin
+csm account add cursor-main --provider cursor   # runs `agent login` in your browser unless Cursor is already signed in
+csm cursor                                      # interactive session in this directory
+csm cursor "Add retries to the webhook client"  # starts with that instruction
+csm cursor --model gpt-5                        # any other flag goes to Cursor as is; `agent models` lists yours
+csm cursor --resume <chat-id>                   # continue a chat
+```
+
+csm finds the CLI as `cursor-agent`, or as `agent` only when it links into a Cursor install (a different `agent` on your `PATH` is ignored); `CSM_CURSOR` points at another path. It does not need the Cursor IDE.
+
+What is different about Cursor:
+
+- **One sign-in per user.** Cursor keeps its login in its own credential store (on macOS, the Keychain, according to the CLI's code) for your whole user account, whatever profile directory it is given. csm therefore manages a single Cursor account: a second `csm account add --provider cursor` is refused, and there is no account switching or same-agent failover for Cursor. To work as another Cursor user, sign out (`agent logout`) and run `csm account login <name>`. csm never reads, copies or stores the login; it asks `agent status --format json` whether you are signed in and `agent about --format json` for the email.
+- **The profile holds settings and chats.** csm starts Cursor with `CURSOR_CONFIG_DIR=~/.csm/accounts/<name>`, so its `cli-config.json` (permissions, approval mode) and chats live there. `--link-settings` shares your own `~/.cursor/cli-config.json`. Some state is not per profile either: Cursor always reads `~/.cursor/mcp.json` and the project's `.cursor/mcp.json`, and it keeps per-directory state (workspace trust, MCP sign-ins, logs) under `~/.cursor/projects/` and `~/.cursor/agent-cli-state.json`. csm leaves all of these alone.
+- **Sessions.** Cursor cannot be given a chat ID up front, so csm finds the chat afterwards by its folder under `chats/<md5 of the directory>/` (it reads the folder name, never the chat) and records it in checkpoints and handoffs. Resume uses `--resume <chat-id>` in the same profile. Cursor's chat store is a private SQLite format, so a handoff *from* Cursor carries the repository state and your checkpoint notes, not the conversation, and the desktop app shows as the task only the request you sent from it.
+- **Usage limits are not detected.** The CLI does not report plan usage, and its limit messages are worded by Cursor's servers and grouped with ordinary rate limits, so csm cannot tell a usage limit from any other stop. It never treats a Cursor exit as a limit, never cools the account down, and never starts an automatic handoff from Cursor. Hand the task on yourself (`csm handoff <account>`, or *Continue with another agent* in the app). Cursor can still be the *target* of an automatic handoff from another agent.
+- **Permissions.** csm passes no `--force`, `--yolo`, `--sandbox`, `--trust` or `--approve-mcps`. Cursor asks before running commands according to the profile's `cli-config.json` (your own with `--link-settings`), in the agent's terminal. On its first run in a directory it asks whether to trust it ("Workspace Trust Required"), including in each Build Room worktree; csm does not answer for you, so a Build Room task waits until you choose in its terminal. If the directory has its own `.cursor/mcp.json`, Cursor's default choice also enables those MCP servers; "Trust this workspace, but don't enable all MCP servers" does not. A worktree separates files and branches; it is not a sandbox and does not limit what Cursor may do on your machine.
+- **Headless mode is not used.** Cursor has a print mode (`-p --output-format json|stream-json`), but csm runs every agent, Cursor included, as a supervised interactive session so that approvals, handoffs and Build Room reports work the same way for all of them.
+
+`csm doctor`, **Settings → Agents** and **Accounts** in the desktop app show what csm can and cannot do with the installed Cursor CLI.
 
 ## Requirements
 
@@ -73,7 +100,7 @@ csm [--debug] <command> [arguments]
 ### Accounts
 
 ```bash
-csm account add <name> [--provider claude|codex|gemini|copilot] [--link-settings]
+csm account add <name> [--provider claude|codex|gemini|copilot|cursor] [--link-settings]
 csm account login <name>      # log in again
 csm account disable <name>    # skip it when switching
 csm account enable <name>
@@ -91,6 +118,7 @@ csm claude [args...]
 csm codex [args...]
 csm gemini [args...]
 csm copilot [args...]
+csm cursor [args...]
 ```
 
 Arguments are passed to the agent. It runs in your terminal as usual.
@@ -208,6 +236,7 @@ Each account is a directory under `~/.csm/accounts/<name>`. `csm` points the age
 | Codex | `CODEX_HOME` | the Codex app-server (`account/read`) |
 | Gemini CLI | `GEMINI_CLI_HOME` | `google_accounts.json` in the profile |
 | GitHub Copilot CLI | `COPILOT_HOME` | `config.json` in the profile |
+| Cursor CLI | `CURSOR_CONFIG_DIR` (settings and chats; the login is per user) | `agent status --format json`, `agent about --format json` |
 
 Before every launch and switch `csm` checks that the profile still reports the account it was set up with. Two profiles that report the same account are rejected.
 
@@ -228,6 +257,7 @@ Before every launch and switch `csm` checks that the profile still reports the a
 | Codex | the rollout file is copied, then `codex resume <id>` |
 | Gemini CLI | the new profile imports the old session file with `--session-file` |
 | GitHub Copilot CLI | the session folder is copied, then `--resume <id>` |
+| Cursor CLI | not carried: csm keeps one Cursor account, so there is no other profile to carry it to; `--resume <chat-id>` continues a chat in the same one |
 
 Your working directory, branch and uncommitted changes are never touched. If a conversation cannot be carried, `csm` says so and starts a new session in the same directory.
 
@@ -236,6 +266,7 @@ Your working directory, branch and uncommitted changes are never touched. If a c
 - Claude Code: a `StopFailure` hook, registered for the launch with `--settings`. Your settings files are not modified.
 - Codex: `csm` reads the account's limits from the app-server once a minute, and once more when Codex exits. Detection can lag by up to a minute.
 - Gemini CLI and Copilot CLI: no signal is available. Switch by hand with `csm next`.
+- Cursor CLI: no signal is available, and it has one account, so csm never acts on a Cursor limit. Hand the task to another agent with `csm handoff`.
 
 ## Account intelligence
 
@@ -289,6 +320,7 @@ The policy lives in `~/.csm/config.json` as `failover_policy`; older files with 
 | Claude Code | the `StopFailure` hook payload: `rate_limit` with usage wording is a usage limit, `authentication_failed` and friends are authentication, `overloaded` and `server_error` are network; the status line also reports the 5-hour and 7-day windows |
 | Codex | `account/rateLimits/read` from the app-server once a minute and at exit; a `rateLimitReachedType` without credits is a usage limit |
 | Gemini CLI, Copilot CLI | no signal outside a session; switch by hand with `csm next` |
+| Cursor CLI | none: its exit codes and messages do not tell a usage limit from other errors, so every Cursor exit is an ordinary exit |
 
 Where an agent gives no signal, `csm` says so rather than guessing.
 ## Cross-agent handoff
@@ -354,6 +386,7 @@ The task context comes from the agent's own session records, read deterministica
 | Codex | the rollout file the app-server reports | user and assistant messages, shell calls |
 | Gemini CLI | the session file under `.gemini/tmp` | user and model messages |
 | Copilot CLI | `events.jsonl` in the session folder | user and assistant messages, tool calls |
+| Cursor CLI | not read: chats sit in Cursor's private SQLite store | nothing; the brief says only the repository state is known |
 
 Tool *output* is never read: it is untrusted and the usual place for secrets. Everything kept is run through a redactor (tokens, bearer headers, URLs with passwords, `NAME=value` with a secret-looking name) and bounded: the last six requests, one progress note, forty files, fifteen commands. The repository is the source of truth; the handoff tells the agent where to look.
 
@@ -367,8 +400,9 @@ The Claude Code format was verified against a real transcript. The Codex, Gemini
 | Codex | the positional prompt, also after `codex resume <id>` |
 | Gemini CLI | `--prompt-interactive` |
 | Copilot CLI | `--interactive <prompt>` |
+| Cursor CLI | the positional prompt |
 
-All four were checked against the installed CLIs' help. If an installed version lacks the flag, `csm` still writes the handoff and prints the path to read.
+All five were checked against the installed CLIs' help (Cursor CLI 2026.10.14). If an installed version lacks the flag, `csm` still writes the handoff and prints the path to read.
 
 ### Same agent, different account
 
@@ -396,7 +430,7 @@ What happens on a limit:
 5. If the handoff cannot be saved, the new agent is **not** started; csm says why and how to continue (`csm handoff <account>`). If the new agent fails to launch, the handoff is recorded as failed, its brief is kept, and csm prints the same instruction.
 6. At most two automatic cross-agent handoffs happen in one `csm` run, and an agent already used in that run is not chosen again, so two limited agents cannot bounce the task back and forth. Accounts that hit a limit stay in cooldown as before.
 
-The handoff record says it was automatic (`"reason": "usage_limit"`), the activity log shows "Automatic handoff after a usage limit", and Mission Control shows the session as running on the new agent, switched from the old one. A different agent receives a structured brief, not the old conversation; whether it continues on its own depends on the agent acting on its opening instruction (Codex, Gemini CLI and Copilot CLI start working on it; Claude Code receives it as an appended system prompt and waits for your first message).
+The handoff record says it was automatic (`"reason": "usage_limit"`), the activity log shows "Automatic handoff after a usage limit", and Mission Control shows the session as running on the new agent, switched from the old one. A different agent receives a structured brief, not the old conversation; whether it continues on its own depends on the agent acting on its opening instruction (Codex, Gemini CLI, Copilot CLI and Cursor CLI start working on it; Claude Code receives it as an appended system prompt and waits for your first message).
 
 ### Context checkpoints
 
@@ -638,6 +672,7 @@ MCP servers are configured per agent profile, so a fresh profile would start wit
 | Codex | `[mcp_servers.*]` tables in `<profile>/config.toml` |
 | Gemini CLI | `mcpServers` in `<profile>/.gemini/settings.json` |
 | GitHub Copilot CLI | `mcpServers` in `<profile>/mcp-config.json` |
+| Cursor CLI | nothing: Cursor reads `~/.cursor/mcp.json` and the project's `.cursor/mcp.json` itself, for every profile |
 
 Before a switch `csm` writes a snapshot to `~/.csm/projects/<id>/mcp-snapshot.json`, and the result to `mcp-handoff.json`. Both hold server names, transports, commands, arguments, URLs and the *names* of environment variables and headers. Values are never written; an argument that looks like a credential (a URL with a password, the value of `--token`) is replaced by `<redacted>`.
 
@@ -714,6 +749,8 @@ That message appears when a configuration refers to `${GITHUB_TOKEN}` and the va
   | Gemini CLI | `GEMINI_API_KEY`, `GOOGLE_GENAI_USE_VERTEXAI`, `GOOGLE_GEMINI_BASE_URL`, `GEMINI_FORCE_ENCRYPTED_FILE_STORAGE` |
   | GitHub Copilot CLI | `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN`, `COPILOT_PROVIDER_BASE_URL` |
 
+  Cursor CLI is the exception: its login is shared by every profile anyway, so `CURSOR_API_KEY` cannot mix up csm accounts and is passed through. csm hides the values of `--api-key`, `--auth-token` and `-H/--header` in its debug log.
+
 - The only git commands `csm` runs are read-only (`rev-parse`, `branch --show-current`, `status --short`).
 
 `csm` does not bypass authentication, rate limits or usage limits. Using several accounts must still follow the terms that apply to each of them.
@@ -721,6 +758,7 @@ That message appears when a configuration refers to `${GITHUB_TOKEN}` and the va
 ## Limitations
 
 - Codex, Gemini CLI and Copilot CLI support has not yet been tested with signed-in accounts. It was built against each CLI signed out and against fake agents.
+- Cursor CLI support was checked against the real CLI 2026.10.14, signed out (help, `--version`, `status` and `about`, the failure when signed out) and signed in: sign-in through `csm account add`, reuse of an existing sign-in, the identity `status` reports, `csm doctor`, the workspace trust prompt, and an interactive session started from CSM Desktop that edited files on a typed task, whose chat csm found and linked in a handoff to another agent. Approval prompts, `--resume` of a real chat and Build Room tasks done by a real Cursor agent have only been exercised with csm's fake Cursor CLI.
 - Switching a running session between two real Claude Code accounts has been exercised with csm's fake agent, not yet with two signed-in accounts.
 - Windows does not build. csm relies on Unix signals, `/bin/sh` and symlinks.
 - If csm itself is killed with `SIGKILL`, the agent it started keeps running on its own and must be closed by hand. Ctrl+C, `SIGTERM` and closing the terminal stop the agent cleanly.
@@ -745,6 +783,10 @@ That message appears when a configuration refers to `${GITHUB_TOKEN}` and the va
 | "identifies as X, but it was set up as Y" | The profile's login changed. Run `csm account login <name>`. |
 | "Previous switch did not complete" | Run the agent command again in that project to resume the switch. |
 | "... is set in your environment" | Unset the variable named in the message. |
+| "Cursor CLI is not installed: … is not Cursor's agent" | Another program called `agent` is on your `PATH`. Install Cursor's CLI (it adds `cursor-agent` too) or set `CSM_CURSOR` to its path. |
+| "Cursor CLI keeps one sign-in per user" | csm already manages your Cursor account. To use another Cursor user, run `agent logout`, then `csm account login <name>`. |
+| "Authentication required. Please run 'agent login'" | Run `csm account login <name>` for your Cursor account. |
+| a Cursor Build Room task does not start working | Cursor is asking whether to trust the new worktree (it asks once per directory) or to approve a command; answer in the task's terminal. |
 | "This … version cannot take an opening instruction" | The agent started without the handoff. Ask it to read the `handoff.md` path printed above. |
 | the new agent asks what you were working on | The handoff had no task context (no session was recorded). Tell it; the repository state was still captured. |
 
