@@ -159,6 +159,10 @@ func injectionArgs(target handoffTarget, st *handoff.State, dir string) []string
 	instruction := handoff.Instruction(*st, filepath.Join(dir, handoff.FileMD))
 
 	if contract := buildContract(); contract != "" {
+		if evidence := buildEvidence(); evidence != "" {
+			contract = evidence + "\n\n" + contract
+		}
+
 		if starter, ok := provider.Starter(target.provider); ok {
 			return starter.TaskArgs(target.features, instruction+"\n\n"+contract)
 		}
@@ -181,6 +185,30 @@ func buildContract() string {
 	}
 
 	return strings.TrimSpace(string(data))
+}
+
+// buildEvidence summarizes the receipt of the run this runner works for, so the receiving agent knows what CSM has
+// verified and what it has not; the full receipt stays on disk.
+func buildEvidence() string {
+	id := os.Getenv("CSM_BUILD_ID")
+	if !validBuildID(id) {
+		return ""
+	}
+
+	home, err := csmHome()
+	if err != nil {
+		return ""
+	}
+
+	b, err := newBuildStore(home).load(id)
+	if err != nil {
+		return ""
+	}
+
+	cwd, _ := os.Getwd()
+	head, _ := gitOut(cwd, "rev-parse", "HEAD")
+
+	return receiptBrief(newReceipt(b, time.Now()), head)
 }
 
 // armHandoff records how the brief will reach the agent; the runner settles the outcome once the agent has been launched.

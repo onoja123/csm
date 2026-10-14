@@ -323,7 +323,7 @@ func TestBuildRunEndToEnd(t *testing.T) {
 
 	body, _ := os.ReadFile(ready.PR.BodyFile)
 
-	for _, want := range []string{"## Summary", "Greeting function", "`go test`: passed", "Round 1 by"} {
+	for _, want := range []string{"## Summary", "Greeting function", "## Verification by CSM", "| `go test ./...` | passed | 0 |", "Round 1 by"} {
 		if !strings.Contains(string(body), want) {
 			t.Errorf("PR body missing %q:\n%s", want, body)
 		}

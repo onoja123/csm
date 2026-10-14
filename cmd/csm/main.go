@@ -55,6 +55,7 @@ Commands:
   hub setup                Connect Sentry through CSM Hub for a team: workspace, webhook URL, client secret, test
   hub connect <url> --token <t>  Run AutoFix jobs from CSM Hub on this machine (status|disconnect)
   build list|show <id>     Show Build Room and AutoFix runs
+  build receipt <id>       What CSM measured for a run: the verified revision, checks, claims and review (--json)
   build watch|approve|finish|retry|cancel <id>  Follow a run, or act on it through csm serve
   serve [--detach]         Run the local service the CSM apps connect to (stop|status|pair)
                            (--listen HOST:PORT also accepts token-authenticated devices on the network)
@@ -62,7 +63,7 @@ Commands:
   help                     Show this list (csm on its own shows your setup)`
 
 // version is overridden at build time with -ldflags "-X main.version=...".
-var version = "0.11.0"
+var version = "0.12.0"
 
 func main() {
 	os.Exit(run(os.Args[1:]))

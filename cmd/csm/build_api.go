@@ -778,6 +778,42 @@ func (d *daemon) getBuild(w http.ResponseWriter, r *http.Request) {
 	writeOK(w, v)
 }
 
+func (d *daemon) getBuildReceipt(w http.ResponseWriter, r *http.Request) {
+	rc, err := d.builds.receipt(r.PathValue("id"))
+	if err != nil {
+		writeErr(w, 404, err)
+
+		return
+	}
+
+	writeOK(w, rc)
+}
+
+// receipt builds the run's receipt from a copy taken under the lock, then compares the branch with git outside it.
+func (e *buildEngine) receipt(id string) (*Receipt, error) {
+	e.mu.Lock()
+	b, ok := e.builds[id]
+
+	var r *Receipt
+	var worktree string
+
+	if ok {
+		r, worktree = newReceipt(b, time.Now()), b.Integration.Worktree
+	}
+
+	e.mu.Unlock()
+
+	if !ok {
+		r, _, err := e.store.loadReceipt(id, time.Now())
+
+		return r, err
+	}
+
+	r.measureDrift(worktree, time.Now())
+
+	return r, nil
+}
+
 func (d *daemon) getBuildDiff(w http.ResponseWriter, r *http.Request) {
 	target := r.URL.Query().Get("target")
 

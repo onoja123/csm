@@ -8,6 +8,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/onoja123/csm/internal/handoff"
 )
@@ -85,6 +86,10 @@ func taskInstruction(b *Build, t *BuildTask, previous *Attempt) string {
 		}
 	}
 
+	if t.Kind == TaskKindFix && len(b.Checks) > 0 {
+		fmt.Fprintf(&s, "\n%s\n", receiptBrief(newReceipt(b, time.Now()), t.BaseCommit))
+	}
+
 	fmt.Fprintf(&s, "\nWork only in %s (branch %s). Other tasks run in their own worktrees; stay within this task's scope.", t.Worktree, t.Branch)
 	s.WriteString(autofixContext(b))
 
@@ -128,6 +133,10 @@ func reviewInstruction(b *Build, dir string, independent bool) string {
 
 	if prev := b.previousFindings(); prev != "" {
 		fmt.Fprintf(&s, "\nFindings from the previous review round, which a fix attempted to address:\n%s", prev)
+	}
+
+	if len(b.Checks) > 0 {
+		fmt.Fprintf(&s, "\n%s\n", receiptBrief(newReceipt(b, time.Now()), b.Integration.Head))
 	}
 
 	s.WriteString("\nCheck the diff against the request and criteria, the repository's conventions, security, error handling, data integrity, API compatibility, tests and edge cases, regressions, and dependency or migration order. Mark a finding blocking only when it must be fixed before merging; style preferences are never blocking. Give a file and line where you can.")

@@ -456,7 +456,7 @@ How it works:
 
 ## Build Room
 
-Build Room turns one request ("Add team invitations: endpoints, tests and a pull request") into a coordinated run across your agents. It lives in the CSM desktop app and runs inside `csm serve`; `csm build list` and `csm build show <id>` print the runs the service keeps under `~/.csm/builds/<id>/`.
+Build Room turns one request ("Add team invitations: endpoints, tests and a pull request") into a coordinated run across your agents. It lives in the CSM desktop app and runs inside `csm serve`; `csm build list` and `csm build show <id>` print the runs the service keeps under `~/.csm/builds/<id>/`, and `csm build receipt <id>` shows what CSM verified (see [Build Receipts](#build-receipts)).
 
 1. **Plan.** An agent reads a read-only copy of the repository and writes a plan: tasks with objectives, acceptance criteria, likely files and dependencies. csm validates it (unique ids, known agents, no missing dependencies, no cycles, at most 12 tasks). By default you review it first; you can edit, reorder, reassign, approve it or cancel the run.
 2. **Implement.** Each task gets its own branch (`csm/build-<run>/<task>`) and git worktree under `~/.csm/builds/<id>/worktrees/`, outside the repository. A task waits for its dependencies and starts from their merged branches. At most *n* agents run at once (1–4), and two tasks that expect to change the same file never run together. Agents run through the normal `csm <agent>` runner, so account failover, automatic handoff and tool approvals apply exactly as in any other session.
@@ -470,6 +470,57 @@ Build Room turns one request ("Add team invitations: endpoints, tests and a pull
 Runs survive restarts: the service reloads them, an agent whose report arrived before the restart still counts, and one that was cut off is marked interrupted with its worktree kept. Pause stops new agents from starting; cancel stops scheduling, asks running agents to stop and keeps every worktree and branch.
 
 **Limitations.** The planner, implementers and reviewer are the agents themselves: their plans and code can be wrong, and an agent approval is not a guarantee. Claude Code in a resumed session after an account switch gets its instruction as an opening prompt; other agents receive it the way each CLI supports. JavaScript checks reuse the repository's installed `node_modules` through a symlink when git ignores it; nothing is installed. Worktrees and branches are not deleted automatically.
+
+### Build Receipts
+
+Every Build Room and AutoFix run has a receipt: the record of what CSM itself ran and measured, kept apart from what the agents said they did. `csm build receipt <id>` prints it, `--json` gives the same data for scripts, and the desktop app shows it on the run's **Receipt** tab.
+
+```
+$ csm build receipt 20261014-101500-ab12cd
+Receipt for run 20261014-101500-ab12cd (final)
+Add a greeting
+
+Outcome      Failed on 3f9c2a1e: 1 check(s) failed, 2 passed, 0 not conclusive
+Verified     3f9c2a1e…   (the commit the checks ran on)
+Current      ✓ the branch is still exactly the verified revision
+Review       round 1 by Codex (work-codex), a different agent: approve; 0 blocking open, 0 accepted by you
+Acceptance   not met: checks: failed
+...
+Checks on the integrated branch
+  ✓ passed               go build ./...
+  ✗ failed               go test ./...
+    exit 1 · 4.2s · 3/4 packages passed
+...
+Agent claims
+  ✗ contradicted greet Claude Code (alpha): go test ./...: all pass
+    CSM ran go test ./... on 3f9c2a1e: failed (exit 1)
+```
+
+It answers: what changed (branch, files and diff stat), which revision was tested, what ran (each command, exit code and duration), what passed, failed or was skipped, whether a different agent reviewed it, and whether the branch is still the code that was verified.
+
+**Check statuses.**
+
+| Status | Meaning |
+| --- | --- |
+| passed | CSM ran the command on the verified revision and it exited 0 |
+| failed | it exited non-zero |
+| timed out | CSM stopped it at the time limit (10 minutes) |
+| pre-existing failure | it also failed on the base commit |
+| skipped | it did not run (nothing was detected or configured) |
+| unavailable | it could not run, for example the tool is not installed or the sandbox is down |
+| inconclusive | a result exists but does not hold for the current branch: it ran on an earlier commit, or no exit code was recorded |
+
+The outcome is **verified** only when every check passed on the same revision; any failure or timeout makes it **failed**, a mix of passes and anything else **partially verified**, and no result **unverified**. A run is *final* once it is completed, failed or cancelled, and *partial* while any evidence is missing; a cancelled or failed run keeps whatever was measured before it stopped.
+
+**Claims and evidence.** Agents report the tests and commands they ran. A claim that names a command CSM also ran is **confirmed** when CSM's result agrees and **contradicted** when it does not, with the measured result as the evidence. Everything else, including acceptance criteria the agent marks as addressed, is **unverifiable**. Files an agent says it changed are compared with the branch's git diff. Test counts are shown only when the runner's own summary could be read whole (pytest, jest, vitest, cargo test, and Go package lines); otherwise the receipt says nothing about counts.
+
+**Revisions.** Each check records the commit it ran on and whether the worktree had uncommitted changes. When the receipt is read, CSM compares the integration branch with that commit: new commits or uncommitted changes are reported as not verified, and a check that ran on an older head is inconclusive.
+
+**Handoffs, fixes, reviews and pull requests.** When a Build Room agent hands its task to another agent, the receiving agent gets a few lines from the receipt: what passed, what failed, how many claims were contradicted, and that its own changes are unverified until CSM checks again. Fix tasks and reviewers get the same summary. The pull request description CSM prepares includes a verification table built from the receipt and links back to it; nothing in it says a pull request was opened or merged.
+
+**Storage.** The receipt is rebuilt from the run record (`~/.csm/builds/<id>/build.json`) whenever it is read, so runs recorded before receipts existed get one too, and a copy is saved as `receipt.json` next to it. If the run record cannot be read, the saved copy is shown with a note. Check output is bounded and passes through the same secret redaction as handoffs.
+
+**Limitations.** Passing checks mean the repository's own commands succeeded, not that the change is free of bugs. Runs recorded before this version have no per-check commit, so their checks cannot be tied to a revision. Long output is cut from the start, which hides some test counts. CSM cannot verify anything an agent did outside the commands it runs itself.
 
 ## AutoFix
 
@@ -491,6 +542,7 @@ csm sentry connect          # paste the token (hidden), pick the organization an
 csm issues                  # unresolved issues: id, events, users, last seen, and CSM's run for each
 csm fix ORDERS-API-3F       # pull the latest event and run AutoFix, following it live; Ctrl+C detaches
 csm build show <id>         # the change, the checks and the review
+csm build receipt <id>      # what CSM measured: verified revision, check results, agent claims
 csm build approve <id>      # push the branch and open the pull request (or: finish, retry, cancel, watch)
 ```
 

@@ -15,10 +15,9 @@ import (
 	"github.com/onoja123/csm/internal/handoff"
 )
 
-const (
-	checkTimeout   = 10 * time.Minute
-	checkOutputMax = 6 << 10
-)
+const checkOutputMax = 6 << 10
+
+var checkTimeout = 10 * time.Minute
 
 // detectChecks reads the repository's own build files for the commands its maintainers run; it never takes commands from an agent.
 func detectChecks(dir string) []CheckDef {
@@ -169,7 +168,7 @@ func runCheck(dir string, def CheckDef, stage string) CheckResult {
 
 	switch {
 	case ctx.Err() != nil:
-		res.State, res.Reason = CheckFailed, "timed out after "+checkTimeout.String()
+		res.State, res.Reason, res.TimedOut = CheckFailed, "timed out after "+checkTimeout.String(), true
 	case err == nil:
 		res.State = CheckPassed
 	case errors.As(err, &exitErr):
@@ -179,6 +178,18 @@ func runCheck(dir string, def CheckDef, stage string) CheckResult {
 	}
 
 	return res
+}
+
+// atRevision runs a check and records the revision it ran on, read before the command so a command that edits the tree cannot change the answer.
+func atRevision(check func(string, CheckDef, string) CheckResult) func(string, CheckDef, string) CheckResult {
+	return func(dir string, def CheckDef, stage string) CheckResult {
+		head, _ := gitOut(dir, "rev-parse", "HEAD")
+		dirty := len(worktreeChanges(dir)) > 0
+		res := check(dir, def, stage)
+		res.Commit, res.Dirty = head, dirty
+
+		return res
+	}
 }
 
 func tail(s string, n int) string {

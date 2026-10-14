@@ -155,6 +155,8 @@ func (e *buildEngine) save(b *Build) {
 		slog.Error("save build", "build", b.ID, "err", err)
 	}
 
+	e.store.saveReceipt(b)
+
 	e.bus.publish("build", map[string]string{"id": b.ID, "status": string(b.Status)})
 }
 
@@ -1283,7 +1285,7 @@ func (e *buildEngine) baseline(b *Build) {
 		}
 	}
 
-	repo, base, path, checks, check := b.Repo, b.BaseCommit, e.worktreePath(b, "baseline"), slices.Clone(b.Policy.Checks), e.checker(b)
+	repo, base, path, checks, check := b.Repo, b.BaseCommit, e.worktreePath(b, "baseline"), slices.Clone(b.Policy.Checks), atRevision(e.checker(b))
 	e.event(b, "baseline.started", "", "Running the checks on the base commit to record existing failures")
 
 	e.async(b, opBaseline, func() func(*Build) {
@@ -1329,7 +1331,7 @@ func (e *buildEngine) validate(b *Build) {
 	}
 
 	path, checks := b.Integration.Worktree, slices.Clone(b.Policy.Checks)
-	repo, check := b.Repo, e.checker(b)
+	repo, check := b.Repo, atRevision(e.checker(b))
 
 	var verifyFix func() func(*Verification)
 
@@ -1720,23 +1722,9 @@ func prBody(b *Build) string {
 		s.WriteString("\n")
 	}
 
-	s.WriteString("\n## Checks run by CSM\n\n")
-
-	for _, c := range b.Checks {
-		if c.Stage != "integration" {
-			continue
-		}
-
-		line := fmt.Sprintf("- `%s`: %s", c.Name, strings.ReplaceAll(string(c.State), "_", " "))
-
-		if c.Reason != "" {
-			line += " (" + c.Reason + ")"
-		}
-
-		s.WriteString(line + "\n")
-	}
-
-	s.WriteString("\n## Review\n\n")
+	s.WriteString("\n")
+	s.WriteString(receiptPRSection(newReceipt(b, time.Now())))
+	s.WriteString("## Review\n\n")
 
 	if len(b.Reviews) == 0 {
 		s.WriteString("No agent review was run for this change.\n")
@@ -1793,7 +1781,7 @@ func prBody(b *Build) string {
 		s.WriteString("- None reported.\n")
 	}
 
-	fmt.Fprintf(&s, "\n---\nCoordinated by CSM Build Room, run %s. Agent reports are claims; the checks above are what CSM executed. Review the diff before merging.\n", b.ID)
+	fmt.Fprintf(&s, "\n---\nCoordinated by CSM Build Room, run %s. Agent reports are claims; the verification above is what CSM executed. Review the diff before merging.\n", b.ID)
 
 	return s.String()
 }

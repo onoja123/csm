@@ -254,6 +254,10 @@ type CheckResult struct {
 	Reason     string     `json:"reason,omitempty"`
 	At         time.Time  `json:"at"`
 	Baseline   CheckState `json:"baseline,omitempty"`
+	TimedOut   bool       `json:"timed_out,omitempty"`
+	// Commit is the HEAD of the directory the check ran in, and Dirty whether it had uncommitted changes then.
+	Commit string `json:"commit,omitempty"`
+	Dirty  bool   `json:"dirty,omitempty"`
 }
 
 type Finding struct {
