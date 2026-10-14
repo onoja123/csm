@@ -202,6 +202,8 @@ type Features struct {
 	// InitialPrompt means the agent accepts an instruction to run at the start of an interactive session.
 	InitialPrompt bool
 	UsageProbe    bool
+	// SharedLogin: one sign-in per user, so a profile separates only settings and sessions and csm keeps one account.
+	SharedLogin bool
 }
 
 func (f Features) CanIsolate() bool { return f.Auth && f.Supervise }

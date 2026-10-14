@@ -38,12 +38,14 @@ func (s desktopSettings) approvals() bool {
 }
 
 type providerInfo struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Installed bool   `json:"installed"`
-	Version   string `json:"version,omitempty"`
-	Error     string `json:"error,omitempty"`
-	Resume    bool   `json:"resume"`
+	ID           string                 `json:"id"`
+	Name         string                 `json:"name"`
+	Installed    bool                   `json:"installed"`
+	Version      string                 `json:"version,omitempty"`
+	Error        string                 `json:"error,omitempty"`
+	Resume       bool                   `json:"resume"`
+	SharedLogin  bool                   `json:"shared_login,omitempty"`
+	Capabilities *provider.Capabilities `json:"capabilities,omitempty"`
 }
 
 type daemon struct {
@@ -218,7 +220,8 @@ func (d *daemon) probeProviders() []providerInfo {
 			info.Version, err = p.Version()
 
 			if f, ferr := p.Features(); ferr == nil {
-				info.Resume = f.Resume
+				caps := provider.CapabilitiesOf(p, f)
+				info.Resume, info.SharedLogin, info.Capabilities = f.Resume, f.SharedLogin, &caps
 			}
 		}
 
