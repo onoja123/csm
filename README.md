@@ -718,6 +718,8 @@ That message appears when a configuration refers to `${GITHUB_TOKEN}` and the va
 
 `csm` does not bypass authentication, rate limits or usage limits. Using several accounts must still follow the terms that apply to each of them.
 
+To report a vulnerability, see [SECURITY.md](SECURITY.md).
+
 ## Limitations
 
 - Codex, Gemini CLI and Copilot CLI support has not yet been tested with signed-in accounts. It was built against each CLI signed out and against fake agents.
@@ -775,4 +777,8 @@ To add an agent, implement the `Provider` interface in `internal/provider`, regi
 
 ## Contributing
 
-Issues and pull requests are welcome. Please run `go vet ./...` and `go test ./...` before opening a pull request.
+Issues and pull requests are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) covers setup and the checks CI runs, and everyone taking part is expected to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
+
+## License
+
+[MIT](LICENSE)
