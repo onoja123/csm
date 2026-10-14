@@ -22,7 +22,7 @@ Accounts only switch with accounts of the same agent. Different agents can run i
 
 ## Requirements
 
-- macOS or Linux. Windows is not supported: csm does not build there yet.
+- macOS or Linux. Windows is not supported yet: csm builds there but exits with a message when it starts.
 - Go 1.25 or newer
 - At least one of the agents above, installed and on your `PATH`
 
@@ -724,7 +724,7 @@ To report a vulnerability, see [SECURITY.md](SECURITY.md).
 
 - Codex, Gemini CLI and Copilot CLI support has not yet been tested with signed-in accounts. It was built against each CLI signed out and against fake agents.
 - Switching a running session between two real Claude Code accounts has been exercised with csm's fake agent, not yet with two signed-in accounts.
-- Windows does not build. csm relies on Unix signals, `/bin/sh` and symlinks.
+- Windows is not supported: csm relies on Unix signals, `/bin/sh` and symlinks. It builds for Windows so that CI keeps it compiling, but exits when it starts.
 - If csm itself is killed with `SIGKILL`, the agent it started keeps running on its own and must be closed by hand. Ctrl+C, `SIGTERM` and closing the terminal stop the agent cleanly.
 - A second `csm use` or `csm next` sent while a switch is already in progress is acknowledged but ignored.
 - Outside a git repository, a project reached through a symlink gets its own state, separate from the same directory reached by its real path. Inside a git repository both resolve to the repository root.

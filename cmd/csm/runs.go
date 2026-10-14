@@ -481,7 +481,7 @@ func (r *agentRun) stop(grace time.Duration) {
 		time.Sleep(grace)
 
 		if status, _ := r.exitState(); status == runStatusLive {
-			syscall.Kill(-r.CSMPID, syscall.SIGKILL)
+			killProcessGroup(r.CSMPID)
 		}
 	}()
 }

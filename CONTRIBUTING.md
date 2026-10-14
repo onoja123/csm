@@ -10,7 +10,7 @@ Thanks for your interest in improving csm. Bug reports, fixes and well-scoped fe
 
 ## Development setup
 
-You need macOS or Linux (Windows does not build yet) and Go 1.25 or newer. You don't need any of the agents installed or signed in: each agent has a fake that the tests run through the `csm` binary.
+You need macOS or Linux (csm doesn't run on Windows yet) and Go 1.25 or newer. You don't need any of the agents installed or signed in: each agent has a fake that the tests run through the `csm` binary.
 
 ```bash
 git clone https://github.com/onoja123/csm.git
@@ -22,7 +22,7 @@ The [Development](README.md#development) section of the README describes the cod
 
 ## Checks
 
-CI runs these on macOS and Ubuntu for every push and pull request, and cross-builds for macOS and Linux on amd64 and arm64. Run them before you push:
+CI runs these on macOS and Ubuntu for every push and pull request, and cross-builds for macOS, Linux and Windows on amd64 and arm64. Run them before you push:
 
 ```bash
 gofmt -l cmd internal   # prints nothing when formatting is right; gofmt -w cmd internal fixes it

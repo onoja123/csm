@@ -12,7 +12,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
-	"syscall"
 	"time"
 
 	"github.com/onoja123/csm/internal/provider"
@@ -49,7 +48,7 @@ func runHook(event string, stdin io.Reader) {
 		}
 
 		if writeJSON(filepath.Join(stateDir, eventFile), f) == nil {
-			syscall.Kill(pid, syscall.SIGUSR1)
+			signalProcess(pid, sigFailure)
 		}
 
 	case "pre-tool-use":
