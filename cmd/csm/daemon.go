@@ -156,6 +156,7 @@ func (d *daemon) handler() http.Handler {
 	mux.HandleFunc("POST /v1/builds", d.postBuild)
 	mux.HandleFunc("GET /v1/builds/{id}", d.getBuild)
 	mux.HandleFunc("GET /v1/builds/{id}/diff", d.getBuildDiff)
+	mux.HandleFunc("GET /v1/builds/{id}/receipt", d.getBuildReceipt)
 	mux.HandleFunc("PUT /v1/builds/{id}/plan", d.putBuildPlan)
 	mux.HandleFunc("POST /v1/builds/{id}/actions/{action}", d.postBuildAction)
 	mux.HandleFunc("GET /v1/signals", d.getSignals)

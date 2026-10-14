@@ -155,6 +155,8 @@ func (e *buildEngine) save(b *Build) {
 		slog.Error("save build", "build", b.ID, "err", err)
 	}
 
+	e.store.saveReceipt(b)
+
 	e.bus.publish("build", map[string]string{"id": b.ID, "status": string(b.Status)})
 }
 
