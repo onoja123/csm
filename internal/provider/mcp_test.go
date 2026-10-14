@@ -603,8 +603,17 @@ func TestGeminiMCP(t *testing.T) {
 	}
 }
 
+// Cursor reads ~/.cursor/mcp.json for every profile, so there is no per-profile configuration to manage.
 func TestEveryProviderHasAnMCPAdapter(t *testing.T) {
+	if _, ok := MCPAdapter(Cursor{}); ok {
+		t.Fatal("Cursor CLI has no per-profile MCP configuration for csm to manage")
+	}
+
 	for _, id := range IDs {
+		if id == CursorID {
+			continue
+		}
+
 		p, _ := New(id, "")
 		a, ok := MCPAdapter(p)
 

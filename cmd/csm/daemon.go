@@ -1618,6 +1618,14 @@ func (d *daemon) postHandoff(w http.ResponseWriter, r *http.Request) {
 		pv.Message = providerName(target.providerID()) + " will start here as " + target.Name + "; no previous agent is recorded for this project."
 	}
 
+	if in.CheckpointID == "" && pv.Source != "" && !strings.HasPrefix(pv.TaskContext, "none") {
+		if p, err := provider.New(pv.Source, ""); err == nil {
+			if _, readable := provider.Extractor(p); !readable {
+				pv.TaskContext = "none; " + p.Name() + " sessions cannot be read (repository state only)"
+			}
+		}
+	}
+
 	if in.Preview || pv.Mode == "none" {
 		writeOK(w, pv)
 

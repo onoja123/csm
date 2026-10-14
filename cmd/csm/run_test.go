@@ -138,6 +138,10 @@ func transcriptWritten(profileDir string) bool {
 func TestManualSwitchOfRunningSession(t *testing.T) {
 	for _, providerID := range provider.IDs {
 		t.Run(providerID, func(t *testing.T) {
+			if providerID == provider.CursorID {
+				t.Skip("Cursor CLI keeps one sign-in per user, so csm manages a single Cursor account and never switches between two")
+			}
+
 			requested := make(chan error, 1)
 			res, err := runFailoverScenario(testBinary(t), scenario{provider: providerID, hold: "alpha", during: switchWhenLive(providerID, requested)})
 			if err != nil {

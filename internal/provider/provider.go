@@ -17,9 +17,10 @@ const (
 	CodexID   = "codex"
 	GeminiID  = "gemini"
 	CopilotID = "copilot"
+	CursorID  = "cursor"
 )
 
-var IDs = []string{ClaudeID, CodexID, GeminiID, CopilotID}
+var IDs = []string{ClaudeID, CodexID, GeminiID, CopilotID, CursorID}
 
 type Provider interface {
 	ID() string
@@ -55,6 +56,8 @@ func New(id, path string) (Provider, error) {
 		return Gemini{Path: path}, nil
 	case CopilotID:
 		return Copilot{Path: path}, nil
+	case CursorID:
+		return Cursor{Path: path}, nil
 	}
 
 	return nil, fmt.Errorf("unknown provider %q; supported: %s", id, strings.Join(IDs, ", "))
@@ -70,6 +73,8 @@ func Find(id string) (Provider, error) {
 		return FindGemini()
 	case CopilotID:
 		return FindCopilot()
+	case CursorID:
+		return FindCursor()
 	}
 
 	return New(id, "")

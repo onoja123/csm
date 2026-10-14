@@ -155,6 +155,13 @@ func TestGenericSessionParsing(t *testing.T) {
 	}
 }
 
+// Cursor's chat store is private SQLite; a handoff from it carries the repository state only.
+func TestCursorChatsAreNeverRead(t *testing.T) {
+	if _, ok := Extractor(Cursor{}); ok {
+		t.Fatal("csm must not read Cursor's private chat store")
+	}
+}
+
 func TestHandoffArgsPerProvider(t *testing.T) {
 	instruction := "Read /state/handoff.md"
 	all := Features{SystemPrompt: true, InitialPrompt: true}
@@ -182,7 +189,7 @@ func TestHandoffArgsPerProvider(t *testing.T) {
 			t.Errorf("%s injected without the feature", id)
 		}
 
-		if _, ok := Extractor(p); !ok {
+		if _, ok := Extractor(p); !ok && id != CursorID {
 			t.Errorf("%s has no session extractor", id)
 		}
 

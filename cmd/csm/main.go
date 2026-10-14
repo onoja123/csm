@@ -14,7 +14,7 @@ import (
 
 const usage = `csm - Code Session Manager
 
-A local profile and session manager for coding agents. Supported providers: Claude Code, Codex, Gemini CLI, GitHub Copilot CLI.
+A local profile and session manager for coding agents. Supported providers: Claude Code, Codex, Gemini CLI, GitHub Copilot CLI, Cursor CLI.
 
 Usage:
   csm [--debug] <command> [arguments]
@@ -26,7 +26,7 @@ Commands:
   current [provider]       Print the active account name
   accounts                 List accounts and their order
   account add <name>       Create a profile and log in
-                           (--provider codex|gemini|copilot for another agent, --link-settings to share your own agent settings)
+                           (--provider codex|gemini|copilot|cursor for another agent, --link-settings to share your own agent settings)
   account login <name>     Log in to an existing profile again
   account remove <name>    Forget an account (its profile directory is kept)
   account enable <name>    Include an account in switching
@@ -44,10 +44,11 @@ Commands:
   codex [args...]          Run Codex under the active Codex account
   gemini [args...]         Run Gemini CLI under the active Gemini CLI account
   copilot [args...]        Run GitHub Copilot CLI under the active Copilot account
+  cursor [args...]         Run the Cursor CLI under your Cursor account
   handoff <account>        Move the current task to another account, even of another agent
                            (--checkpoint <id> continues a saved checkpoint)
   checkpoint               Save the current task's context without switching (list|show|edit)
-                           (--provider codex|gemini|copilot|claude for that agent's active account)
+                           (--provider codex|gemini|copilot|cursor|claude for that agent's active account)
   test failover [codex]    Simulate a failover with a fake agent (no real usage)
   sentry connect           Connect this repository to a Sentry project with your auth token (status|disconnect)
   issues                   List the connected projects' unresolved Sentry issues and CSM's runs for them
@@ -93,6 +94,10 @@ func run(args []string) int {
 
 	if len(args) > 0 && args[0] == "__fake-copilot" {
 		return provider.RunFakeCopilot(args[1:])
+	}
+
+	if len(args) > 0 && args[0] == "__fake-cursor" {
+		return provider.RunFakeCursor(args[1:])
 	}
 
 	log := &Logger{out: os.Stdout, err: os.Stderr}
@@ -177,7 +182,7 @@ func run(args []string) int {
 	case "mcp":
 		err = cmdMCP(log, home, rest)
 
-	case provider.ClaudeID, provider.CodexID, provider.GeminiID, provider.CopilotID:
+	case provider.ClaudeID, provider.CodexID, provider.GeminiID, provider.CopilotID, provider.CursorID:
 		code, err = cmdRun(log, home, cmd, rest)
 
 	case "handoff":

@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/onoja123/csm/internal/provider"
 )
 
 func task(id string, deps ...string) *BuildTask {
@@ -62,7 +64,7 @@ func TestValidatePlanRejectsBadGraphs(t *testing.T) {
 		"used twice":             {task("a"), task("a")},
 		"lowercase letters":      {task("Bad ID")},
 		"has no tasks":           {},
-		"unknown agent":          {{ID: "a", Title: "a", Objective: "o", Provider: "cursor"}},
+		"unknown agent":          {{ID: "a", Title: "a", Objective: "o", Provider: "not-an-agent"}},
 		"needs a title":          {{ID: "a", Objective: "o"}},
 	}
 
@@ -490,7 +492,7 @@ func TestBuildEndpoints(t *testing.T) {
 		t.Fatalf("preflight: %d %v", code, out)
 	}
 
-	if agents, _ := out["agents"].([]any); len(agents) != 4 {
+	if agents, _ := out["agents"].([]any); len(agents) != len(provider.IDs) {
 		t.Fatalf("preflight lists every agent with its readiness: %v", out["agents"])
 	}
 

@@ -108,11 +108,17 @@ func setupProvider(log *Logger, s *State, id string) (installed bool, err error)
 
 	isolationErr := errUnsupported(p)
 
-	if features.CanIsolate() {
+	switch {
+	case features.CanIsolate() && features.SharedLogin:
+		isolationErr = nil
+		log.Row("  Profile isolation", sharedLoginNote(p))
+	case features.CanIsolate():
 		isolationErr = probeIsolation(s, p)
+		log.Check("  Profile isolation", isolationErr == nil)
+	default:
+		log.Check("  Profile isolation", false)
 	}
 
-	log.Check("  Profile isolation", isolationErr == nil)
 	log.Check("  Session resume", features.CanContinue())
 
 	if isolationErr != nil {
@@ -269,7 +275,11 @@ func doctorProvider(log *Logger, s *State, p provider.Provider, fail func(label,
 		return false
 	}
 
-	if s != nil {
+	switch {
+	case features.SharedLogin:
+		log.Check(p.Name()+" profile isolation", true)
+		log.Row(p.Name()+" credential isolation", sharedLoginNote(p))
+	case s != nil:
 		if err := probeIsolation(s, p); err != nil {
 			fail(p.Name()+" credential isolation", err.Error())
 		} else {
@@ -626,6 +636,10 @@ func accountAdd(log *Logger, s *State, providerID, name string, linkSettings boo
 		return errUnsupported(p)
 	}
 
+	if names := s.accountNames(p.ID()); features.SharedLogin && len(names) > 0 {
+		return fmt.Errorf("%s keeps one sign-in per user, so csm manages a single %s account, and %s is it.\n\nTo work as a different user, sign out of %s and run:\n\n    csm account login %s", p.Name(), p.Name(), names[0], p.Name(), names[0])
+	}
+
 	a, err := s.addAccount(p.ID(), name, time.Now())
 	if err != nil {
 		return err
@@ -648,10 +662,12 @@ func accountAdd(log *Logger, s *State, providerID, name string, linkSettings boo
 		}
 	}
 
-	if err := checkFreshProfileIsolated(p, a.ConfigDir); err != nil {
-		os.RemoveAll(a.ConfigDir)
+	if !features.SharedLogin {
+		if err := checkFreshProfileIsolated(p, a.ConfigDir); err != nil {
+			os.RemoveAll(a.ConfigDir)
 
-		return err
+			return err
+		}
 	}
 
 	err = s.update(func(state *State) error {
@@ -671,10 +687,14 @@ func accountAdd(log *Logger, s *State, providerID, name string, linkSettings boo
 }
 
 func accountLogin(log *Logger, s *State, p provider.Provider, a *Account) error {
-	log.Info("\nAuthenticate %s normally in the browser window %s opens.\n", a.Name, p.Name())
+	if signedInElsewhere(p, a) {
+		log.Info("\n%s is already signed in on this computer, and csm uses that sign-in for %s.\nTo work as a different user, sign out of %s and run: csm account login %s", p.Name(), a.Name, p.Name(), a.Name)
+	} else {
+		log.Info("\nAuthenticate %s normally in the browser window %s opens.\n", a.Name, p.Name())
 
-	if err := p.Login(a.ConfigDir); err != nil {
-		return fmt.Errorf("%s login for %s did not complete: %w\n\nTry again with:\n\n    csm account login %s", p.Name(), a.Name, err, a.Name)
+		if err := p.Login(a.ConfigDir); err != nil {
+			return fmt.Errorf("%s login for %s did not complete: %w\n\nTry again with:\n\n    csm account login %s", p.Name(), a.Name, err, a.Name)
+		}
 	}
 
 	st, err := verifyProfile(p, a)
@@ -707,6 +727,25 @@ func accountLogin(log *Logger, s *State, p provider.Provider, a *Account) error 
 	log.Info("\n✓ %s ready (%s)", a.Name, st.Email)
 
 	return nil
+}
+
+func signedInElsewhere(p provider.Provider, a *Account) bool {
+	f, err := p.Features()
+	if err != nil || !f.SharedLogin {
+		return false
+	}
+
+	id, err := p.Identity(a.ConfigDir)
+
+	return err == nil && id.LoggedIn
+}
+
+func oneSignIn(p provider.Provider) string {
+	return p.Name() + " keeps one sign-in per user, so csm manages a single account for it"
+}
+
+func sharedLoginNote(p provider.Provider) string {
+	return "settings and sessions only; " + oneSignIn(p)
 }
 
 func findManagedSession(s *State, providerID string) (Session, bool, error) {
@@ -857,6 +896,10 @@ func cmdNext(log *Logger, home string, args []string) error {
 	}
 
 	target, err := s.nextAccount(providerID, current, nil, time.Now())
+	if err != nil && len(s.accountNames(providerID)) == 1 {
+		return fmt.Errorf("%s is the only %s account, so there is no other to switch to.%s\n\nTo continue the task with another agent, run: csm handoff <account>", current, providerName(providerID), sharedLoginHint(providerID))
+	}
+
 	if err != nil {
 		return fmt.Errorf("no other %s account is ready (%w).\n\nRun: csm accounts", providerName(providerID), err)
 	}
@@ -1029,4 +1072,17 @@ func newRunnerAt(log *Logger, s *State, providerID, csmPath, cwd string) (*runne
 	}
 
 	return r, nil
+}
+
+func sharedLoginHint(providerID string) string {
+	p, err := provider.Find(providerID)
+	if err != nil {
+		return ""
+	}
+
+	if f, err := p.Features(); err == nil && f.SharedLogin {
+		return " " + oneSignIn(p) + "."
+	}
+
+	return ""
 }
