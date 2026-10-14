@@ -64,7 +64,7 @@ Commands:
   help                     Show this list (csm on its own shows your setup)`
 
 // version is overridden at build time with -ldflags "-X main.version=...".
-var version = "0.12.0"
+var version = "0.13.0"
 
 func main() {
 	os.Exit(run(os.Args[1:]))
