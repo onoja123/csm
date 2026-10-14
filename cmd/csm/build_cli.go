@@ -27,12 +27,16 @@ func cmdBuild(log *Logger, home string, args []string) error {
 		return nil
 	}
 
+	if args[0] == "receipt" {
+		return cmdBuildReceipt(log, home, args[1:])
+	}
+
 	if _, ok := buildActions[args[0]]; (ok || args[0] == "watch") && len(args) == 2 {
 		return cmdBuildAction(log, home, args[0], args[1])
 	}
 
 	if args[0] != "show" || len(args) != 2 {
-		return errors.New("usage: csm build list | show <id> | watch <id> | approve <id> | finish <id> | retry <id> | cancel <id>")
+		return errors.New("usage: csm build list | show <id> | receipt <id> [--json] | watch <id> | approve <id> | finish <id> | retry <id> | cancel <id>")
 	}
 
 	b, err := store.load(args[1])
