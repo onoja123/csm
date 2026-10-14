@@ -35,7 +35,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [darwin/amd64, darwin/arm64, linux/amd64, linux/arm64]
+        target: [darwin/amd64, darwin/arm64, linux/amd64, linux/arm64, windows/amd64, windows/arm64]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -45,16 +45,3 @@ jobs:
         run: GOOS=${TARGET%/*} GOARCH=${TARGET#*/} go build ./...
         env:
           TARGET: ${{ matrix.target }}
-
-  # Windows is not supported yet. This job records whether it builds and never fails the run.
-  windows:
-    name: build (windows, unsupported)
-    runs-on: windows-latest
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-      - name: Build
-        run: go build ./...
