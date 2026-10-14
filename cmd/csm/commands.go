@@ -10,7 +10,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/onoja123/csm/internal/handoff"
@@ -757,7 +756,7 @@ func requestSwitchWith(log *Logger, s *State, sess Session, to, checkpointID str
 		return err
 	}
 
-	if err := syscall.Kill(sess.CSMPID, syscall.SIGUSR2); err != nil {
+	if err := signalProcess(sess.CSMPID, sigSwitch); err != nil {
 		os.Remove(path)
 
 		return fmt.Errorf("signal the running csm session: %w", err)

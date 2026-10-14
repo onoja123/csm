@@ -9,7 +9,6 @@ import (
 	"regexp"
 	"slices"
 	"strconv"
-	"syscall"
 	"time"
 
 	"github.com/onoja123/csm/internal/provider"
@@ -166,7 +165,7 @@ func (s *State) update(fn func(*State) error) error {
 
 	defer lock.Close()
 
-	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+	if err := lockFile(lock); err != nil {
 		return err
 	}
 

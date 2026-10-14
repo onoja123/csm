@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/onoja123/csm/internal/provider"
@@ -163,14 +162,4 @@ func (s *State) liveSessions() []Session {
 	}
 
 	return live
-}
-
-func processAlive(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
-
-	err := syscall.Kill(pid, 0)
-
-	return err == nil || errors.Is(err, syscall.EPERM)
 }
