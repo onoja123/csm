@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/onoja123/csm/engrun"
+	"github.com/onoja123/csm/internal/handoff"
 	"github.com/onoja123/csm/internal/sandbox"
 )
 
@@ -654,13 +655,13 @@ func (e *buildEngine) checker(b *Build) func(dir string, def CheckDef, stage str
 		}
 
 		r := runner.Run(context.Background(), sandbox.Spec{Dir: dir, Command: def.Command, Image: image, Timeout: checkTimeout, Network: network, ReadOnly: sandbox.Caches(dir), Cache: cache})
-		res.DurationMS, res.Output = r.Duration.Milliseconds(), tail(r.Output, checkOutputMax)
+		res.DurationMS, res.Output = r.Duration.Milliseconds(), tail(handoff.Redact(r.Output), checkOutputMax)
 
 		switch {
 		case !r.Ran():
 			res.State, res.Reason = CheckBlocked, "sandbox: "+r.Error
 		case r.TimedOut:
-			res.State, res.Reason = CheckFailed, "timed out in the sandbox"
+			res.State, res.Reason, res.TimedOut = CheckFailed, "timed out in the sandbox", true
 		case r.ExitCode == 0:
 			res.State = CheckPassed
 		default:

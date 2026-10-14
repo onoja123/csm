@@ -1283,7 +1283,7 @@ func (e *buildEngine) baseline(b *Build) {
 		}
 	}
 
-	repo, base, path, checks, check := b.Repo, b.BaseCommit, e.worktreePath(b, "baseline"), slices.Clone(b.Policy.Checks), e.checker(b)
+	repo, base, path, checks, check := b.Repo, b.BaseCommit, e.worktreePath(b, "baseline"), slices.Clone(b.Policy.Checks), atRevision(e.checker(b))
 	e.event(b, "baseline.started", "", "Running the checks on the base commit to record existing failures")
 
 	e.async(b, opBaseline, func() func(*Build) {
@@ -1329,7 +1329,7 @@ func (e *buildEngine) validate(b *Build) {
 	}
 
 	path, checks := b.Integration.Worktree, slices.Clone(b.Policy.Checks)
-	repo, check := b.Repo, e.checker(b)
+	repo, check := b.Repo, atRevision(e.checker(b))
 
 	var verifyFix func() func(*Verification)
 
