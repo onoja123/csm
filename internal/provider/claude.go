@@ -342,15 +342,14 @@ func (c Claude) CarrySession(fromProfile, toProfile, sessionID string) ([]string
 	return []string{"--resume", sessionID}, sessionID, nil
 }
 
+// LinkUserConfig shares the user's own settings with a fresh profile; the user's directory is never modified.
 func (c Claude) LinkUserConfig(profileDir string) (string, []string, error) {
-	home, err := os.UserHomeDir()
-
+	userDir, links, err := c.userLinks(profileDir)
 	if err != nil {
 		return "", nil, err
 	}
 
-	userDir := filepath.Join(home, ".claude")
-	linked, err := linkUserConfig(userDir, profileDir, []string{"settings.json", "CLAUDE.md", "agents", "commands", "skills"})
+	linked, _, err := applyLinks(links)
 
 	return userDir, linked, err
 }

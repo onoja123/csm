@@ -271,14 +271,14 @@ func (c Codex) Login(profileDir string) error {
 	return cmd.Run()
 }
 
+// LinkUserConfig shares the user's own settings with a fresh profile; the user's directory is never modified.
 func (c Codex) LinkUserConfig(profileDir string) (string, []string, error) {
-	home, err := os.UserHomeDir()
+	userDir, links, err := c.userLinks(profileDir)
 	if err != nil {
 		return "", nil, err
 	}
 
-	userDir := filepath.Join(home, ".codex")
-	linked, err := linkUserConfig(userDir, profileDir, []string{"config.toml", "AGENTS.md", "hooks.json", "prompts", "rules"})
+	linked, _, err := applyLinks(links)
 
 	return userDir, linked, err
 }

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"syscall"
@@ -66,6 +67,7 @@ func RunFakeCodex(args []string) int {
 	}
 
 	fmt.Fprintf(f, "{\"id\":%q,\"cwd\":%q,\"profile\":%q,\"resumed\":%t,\"prompt\":%q}\n", sessionID, cwd, profile, resume, prompt)
+	fakeCodexSkills(f, home, cwd, prompt)
 	f.Close()
 
 	term := make(chan os.Signal, 1)
@@ -92,6 +94,27 @@ func RunFakeCodex(args []string) int {
 		return 143
 	case <-time.After(wait):
 		return 0
+	}
+}
+
+var fakeSkillMention = regexp.MustCompile(`\$([a-z0-9][a-z0-9-]*)`)
+
+// fakeCodexSkills records a $skill mention the way Codex does: the skill it found, injected as a user message.
+func fakeCodexSkills(f *os.File, home, cwd, prompt string) {
+	userHome, _ := os.UserHomeDir()
+
+	for _, m := range fakeSkillMention.FindAllStringSubmatch(prompt, -1) {
+		for _, dir := range []string{filepath.Join(cwd, ".agents", "skills", m[1]), filepath.Join(home, "skills", m[1]), filepath.Join(userHome, ".agents", "skills", m[1])} {
+			if _, err := os.Stat(filepath.Join(dir, "SKILL.md")); err != nil {
+				continue
+			}
+
+			text := fmt.Sprintf("<skill>\n<name>%s</name>\n<path>%s</path>\n</skill>", m[1], filepath.Join(dir, "SKILL.md"))
+			item, _ := json.Marshal(map[string]any{"timestamp": time.Now().UTC(), "type": "response_item", "payload": map[string]any{"type": "message", "role": "user", "content": []map[string]string{{"type": "input_text", "text": text}}}})
+			f.Write(append(item, '\n'))
+
+			break
+		}
 	}
 }
 
