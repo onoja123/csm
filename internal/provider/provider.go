@@ -17,9 +17,10 @@ const (
 	CodexID   = "codex"
 	GeminiID  = "gemini"
 	CopilotID = "copilot"
+	CursorID  = "cursor"
 )
 
-var IDs = []string{ClaudeID, CodexID, GeminiID, CopilotID}
+var IDs = []string{ClaudeID, CodexID, GeminiID, CopilotID, CursorID}
 
 type Provider interface {
 	ID() string
@@ -55,6 +56,8 @@ func New(id, path string) (Provider, error) {
 		return Gemini{Path: path}, nil
 	case CopilotID:
 		return Copilot{Path: path}, nil
+	case CursorID:
+		return Cursor{Path: path}, nil
 	}
 
 	return nil, fmt.Errorf("unknown provider %q; supported: %s", id, strings.Join(IDs, ", "))
@@ -70,10 +73,14 @@ func Find(id string) (Provider, error) {
 		return FindGemini()
 	case CopilotID:
 		return FindCopilot()
+	case CursorID:
+		return FindCursor()
 	}
 
 	return New(id, "")
 }
+
+const probeTimeout = 30 * time.Second
 
 // probeOutput runs an agent command with a throwaway profile, because some agents write to their home even for --version.
 func probeOutput(p Provider, args ...string) ([]byte, error) {
@@ -85,10 +92,19 @@ func probeOutput(p Provider, args ...string) ([]byte, error) {
 
 	defer os.RemoveAll(dir)
 
-	cmd := exec.Command(p.Executable(), args...)
-	cmd.Env = p.Env(dir)
+	ctx, cancel := context.WithTimeout(context.Background(), probeTimeout)
+	defer cancel()
 
-	return cmd.Output()
+	cmd := exec.CommandContext(ctx, p.Executable(), args...)
+	cmd.Env = p.Env(dir)
+	cmd.WaitDelay = time.Second
+	out, err := cmd.Output()
+
+	if ctx.Err() != nil {
+		return out, fmt.Errorf("no answer within %s", probeTimeout)
+	}
+
+	return out, err
 }
 
 func checkAuthEnv(names []string) error {
@@ -191,6 +207,8 @@ type Features struct {
 	// InitialPrompt means the agent accepts an instruction to run at the start of an interactive session.
 	InitialPrompt bool
 	UsageProbe    bool
+	// SharedLogin: one sign-in per user, so a profile separates only settings and sessions and csm keeps one account.
+	SharedLogin bool
 }
 
 func (f Features) CanIsolate() bool { return f.Auth && f.Supervise }

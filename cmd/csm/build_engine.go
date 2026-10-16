@@ -393,8 +393,8 @@ func eligible(s *State, id string, now time.Time) (*Account, provider.Provider, 
 		return nil, nil, f, err
 	}
 
-	if _, ok := provider.Starter(p); !ok {
-		return nil, nil, f, fmt.Errorf("%s cannot be given a task", providerName(id))
+	if !provider.CanStartTasks(p, f) {
+		return nil, nil, f, fmt.Errorf("%s cannot be given a task: this version takes no opening instruction", providerName(id))
 	}
 
 	acct, err := s.bestAccount(id, "", nil, now)

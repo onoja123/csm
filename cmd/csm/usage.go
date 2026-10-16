@@ -123,6 +123,10 @@ func usageProvider(id string) (provider.Provider, error) {
 		return nil, err
 	}
 
+	if !features.UsageProbe && p.ID() == provider.CursorID {
+		return nil, fmt.Errorf("%s does not report plan usage, so csm has none to show", p.Name())
+	}
+
 	if !features.UsageProbe {
 		return nil, fmt.Errorf("this %s version cannot report usage outside a session.\n\nFigures recorded during a session, if any, are shown by: csm usage --cached", p.Name())
 	}

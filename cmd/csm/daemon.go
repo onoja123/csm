@@ -38,12 +38,14 @@ func (s desktopSettings) approvals() bool {
 }
 
 type providerInfo struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Installed bool   `json:"installed"`
-	Version   string `json:"version,omitempty"`
-	Error     string `json:"error,omitempty"`
-	Resume    bool   `json:"resume"`
+	ID           string                 `json:"id"`
+	Name         string                 `json:"name"`
+	Installed    bool                   `json:"installed"`
+	Version      string                 `json:"version,omitempty"`
+	Error        string                 `json:"error,omitempty"`
+	Resume       bool                   `json:"resume"`
+	SharedLogin  bool                   `json:"shared_login,omitempty"`
+	Capabilities *provider.Capabilities `json:"capabilities,omitempty"`
 }
 
 type daemon struct {
@@ -218,7 +220,8 @@ func (d *daemon) probeProviders() []providerInfo {
 			info.Version, err = p.Version()
 
 			if f, ferr := p.Features(); ferr == nil {
-				info.Resume = f.Resume
+				caps := provider.CapabilitiesOf(p, f)
+				info.Resume, info.SharedLogin, info.Capabilities = f.Resume, f.SharedLogin, &caps
 			}
 		}
 
@@ -1613,6 +1616,14 @@ func (d *daemon) postHandoff(w http.ResponseWriter, r *http.Request) {
 	} else {
 		pv.Mode, pv.TaskContext = "fresh", "none; repository state only"
 		pv.Message = providerName(target.providerID()) + " will start here as " + target.Name + "; no previous agent is recorded for this project."
+	}
+
+	if in.CheckpointID == "" && pv.Source != "" && !strings.HasPrefix(pv.TaskContext, "none") {
+		if p, err := provider.New(pv.Source, ""); err == nil {
+			if _, readable := provider.Extractor(p); !readable {
+				pv.TaskContext = "none; " + p.Name() + " sessions cannot be read (repository state only)"
+			}
+		}
 	}
 
 	if in.Preview || pv.Mode == "none" {

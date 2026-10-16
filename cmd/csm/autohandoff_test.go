@@ -164,8 +164,12 @@ func TestCrossFallbackChoosesOnlyUsableAgentsAndIsBounded(t *testing.T) {
 		t.Fatalf("a logged-out account was chosen: %q", got)
 	}
 
-	if err := s.Config.setHandoffTo([]string{"cursor"}); err == nil {
+	if err := s.Config.setHandoffTo([]string{"not-an-agent"}); err == nil {
 		t.Fatal("unknown agent accepted")
+	}
+
+	if err := s.Config.setHandoffTo([]string{"cursor"}); err != nil {
+		t.Fatalf("Cursor CLI must be a valid handoff target: %v", err)
 	}
 
 	_ = home

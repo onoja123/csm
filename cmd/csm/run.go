@@ -180,6 +180,9 @@ func (r *runner) launch(acct *Account, args []string, sessionID string, sigs cha
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	slog.Debug("launching agent", "provider", r.provider.Name(), "account", acct.Name, "profile_dir", acct.ConfigDir, "args", r.provider.RedactArgs(args))
 
+	// Taken before the agent starts: a fast agent can write its session before Start returns, and sessions are found by age.
+	startedAt := time.Now()
+
 	if err := cmd.Start(); err != nil {
 		finishHandoff(r.pendingHandoff, r.project.Dir, false, err, time.Now())
 		r.pendingHandoff = ""
@@ -191,7 +194,6 @@ func (r *runner) launch(acct *Account, args []string, sessionID string, sigs cha
 	receivedHandoff := r.pendingHandoff
 	r.pendingHandoff = ""
 
-	startedAt := time.Now()
 	err := r.state.update(func(state *State) error {
 		a, err := state.resolveAccount(acct.Name)
 		if err != nil {

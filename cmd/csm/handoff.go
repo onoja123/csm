@@ -536,8 +536,14 @@ func cmdHandoff(log *Logger, home string, args []string) (int, error) {
 	switch {
 	case checkpointID != "":
 		log.Row("Task context", "from checkpoint "+checkpointID)
+	case from == nil || source == nil || cp.SessionID == "":
+		log.Row("Task context", "none; repository state only")
 	default:
-		log.Row("Task context", map[bool]string{true: "from the last checkpoint", false: "none; repository state only"}[from != nil && cp.SessionID != ""])
+		if _, readable := provider.Extractor(source); !readable {
+			log.Row("Task context", "repository state only; "+source.Name()+" sessions cannot be read")
+		} else {
+			log.Row("Task context", "from the last checkpoint")
+		}
 	}
 
 	log.Row("Git state", map[bool]string{true: proj.Branch, false: "not a git repository"}[proj.IsGit])

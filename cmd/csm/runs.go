@@ -12,6 +12,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/creack/pty"
 	"github.com/hinshun/vt10x"
@@ -64,6 +66,8 @@ type agentRun struct {
 	lastOutputAt time.Time
 	task         taskInfo
 	taskCheck    time.Time
+	// sent is text csm delivered whole and submitted, the only request it can show when the agent's session is unreadable.
+	pending, sent string
 
 	// The virtual terminal keeps the screen a phone can show as text; the raw bytes still go to desktop clients untouched.
 	vtMu       sync.Mutex
@@ -84,6 +88,7 @@ type screenView struct {
 
 type taskInfo struct {
 	Summary       string    `json:"summary,omitempty"`
+	Note          string    `json:"note,omitempty"`
 	SessionID     string    `json:"session_id,omitempty"`
 	Messages      int       `json:"messages,omitempty"`
 	FilesModified []string  `json:"files_modified,omitempty"`
@@ -386,9 +391,27 @@ func (r *agentRun) write(data []byte) error {
 		return errors.New("the run has exited")
 	}
 
+	r.noteInput(data)
 	_, err := r.tty.Write(data)
 
 	return err
+}
+
+// noteInput keeps a message written in one piece and then submitted with Enter; keystrokes typed one by one never count.
+func (r *agentRun) noteInput(data []byte) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	switch s := string(data); {
+	case s == "\r":
+		if r.pending != "" {
+			r.sent, r.pending = r.pending, ""
+		}
+	case len(s) > 1 && utf8.ValidString(s) && !strings.ContainsFunc(s, unicode.IsControl):
+		r.pending = s
+	default:
+		r.pending = ""
+	}
 }
 
 func (r *agentRun) resize(cols, rows int) error {
@@ -554,6 +577,24 @@ func (m *runManager) view(s *State, r *agentRun) runView {
 
 // taskFor reads the agent's own session record for the last thing the user asked; it is a label, never a progress figure.
 func (m *runManager) taskFor(s *State, r *agentRun, v runView) taskInfo {
+	p, err := provider.New(v.Provider, "")
+	if err != nil {
+		return taskInfo{}
+	}
+
+	extractor, ok := provider.Extractor(p)
+	if !ok {
+		r.mu.Lock()
+		sent := r.sent
+		r.mu.Unlock()
+
+		if sent != "" {
+			return taskInfo{SessionID: v.SessionID, Summary: firstLine(sent)}
+		}
+
+		return taskInfo{SessionID: v.SessionID, Note: p.Name() + " sessions cannot be read, so the request is not shown."}
+	}
+
 	r.mu.Lock()
 	cached, checked := r.task, r.taskCheck
 	r.mu.Unlock()
@@ -568,16 +609,6 @@ func (m *runManager) taskFor(s *State, r *agentRun, v runView) taskInfo {
 
 	acct, err := s.resolveAccount(v.Account)
 	if err != nil {
-		return cached
-	}
-
-	p, err := provider.New(v.Provider, "")
-	if err != nil {
-		return cached
-	}
-
-	extractor, ok := provider.Extractor(p)
-	if !ok {
 		return cached
 	}
 
