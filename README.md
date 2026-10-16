@@ -207,6 +207,18 @@ csm mcp handoff <from> <to> --apply   # write the compatible ones into the targe
 
 See [MCP failover](#mcp-failover) for what moves and what does not.
 
+### Skills
+
+```bash
+csm skills search pdf              # installed skills and the public catalog
+csm skills inspect pdf             # files, license, inspection findings, compatibility per agent
+csm skills install pdf             # place it for every agent account that can use it
+csm skills list --all              # what each agent account can load in this project
+csm skills doctor --verify         # ask each agent which skills it actually finds
+```
+
+See [Skills](#skills-1) for scopes, compatibility, tasks and handoffs.
+
 ### Desktop app service
 
 ```bash
@@ -733,6 +745,111 @@ That message appears when a configuration refers to `${GITHUB_TOKEN}` and the va
 - `csm doctor` includes one `MCP <account>` row per account and reports an unreadable MCP configuration as a problem.
 - A failed MCP handoff never stops the account switch. The agent starts anyway; the report says what needs attention.
 
+## Skills
+
+[Agent Skills](https://agentskills.io/specification) are folders with a `SKILL.md` that coding agents load when a task needs them. `csm` keeps one library of skills, places each one where every agent that can use it actually looks, pins the skills a task uses, carries them through handoffs and records them in Build Receipts. Each agent keeps its own way of loading skills; `csm` never pastes a skill into a prompt.
+
+### Your first skill
+
+```bash
+csm skills search pdf
+csm skills inspect pdf
+csm skills install pdf             # global: every account of every agent that can use it
+csm skills install pdf --project   # this project's own skill folders, which you can commit
+csm claude --skills pdf            # pin installed skills to one session
+```
+
+Sources: a skill name from the catalog, a local folder, `owner/repo/path[@ref]` or a GitHub URL (only that folder is downloaded, pinned to the commit), or any git URL as `https://host/team/skills.git//path/in/repo@v1`. A folder an agent already loads, such as `~/.claude/skills/notes`, can be installed too; `csm` then manages a copy and leaves yours alone.
+
+The catalog lists the skills in six public repositories (`anthropics/skills`, `obra/superpowers`, `vercel-labs/agent-skills`, `callstackincubator/agent-skills`, `expo/skills`, `trailofbits/skills`), read from GitHub when you search. `csm skills search <words> --registry` also searches the [skills.sh](https://skills.sh) registry; its results install as `skills.sh:<owner>/<repo>/<skill>`, which csm reads from that skill's own GitHub repository, pinned to a commit. Results are ranked by how well they match your words; csm shows no ratings or download counts. Offline, search shows installed skills and the last catalog read. Set `CSM_GITHUB_TOKEN` (for example `CSM_GITHUB_TOKEN=$(gh auth token)`) to raise GitHub's rate limit or read private repositories; the token is only ever sent to GitHub.
+
+`csm skills packs` lists groups of these skills (Frontend Implementation, React Native Engineer, Code Review, Testing and Quality, Security Review, Office Documents). They have not been reviewed or tested as a set; `csm skills pack install <id>` installs each member through the same checks, and members can be changed one by one afterwards.
+
+### Where skills go
+
+| Agent | Global copy (per account) | Project and task copies | Also reads | Asked for with | Evidence of use |
+| --- | --- | --- | --- | --- | --- |
+| Claude Code | `<profile>/skills` | `.claude/skills` | | its Skill tool, `/name` | Skill tool calls and `/name` commands in the transcript |
+| Codex | `<profile>/skills` (`$CODEX_HOME/skills`, deprecated by Codex but still read) | `.agents/skills` | `~/.agents/skills`, `.codex/skills` | `$name` in the prompt | `$name` injections and reads of `SKILL.md` in the rollout |
+| Gemini CLI | `<profile>/.gemini/skills` | `.gemini/skills` | `<profile>/.agents/skills`, `.agents/skills` | `activate_skill`, `/name` | `activate_skill` calls in the chat record |
+| GitHub Copilot CLI | `<profile>/skills` | `.github/skills` | `.agents/skills`, `.claude/skills`, `COPILOT_SKILLS_DIRS` | its skill tool, `/name` | `skill.invoked` events |
+| Cursor CLI | `~/.cursor/skills` (Cursor ignores `CURSOR_CONFIG_DIR` for skills) | `.cursor/skills` | `~/.claude/skills`, `~/.agents/skills`, `~/.codex/skills` and the project equivalents | `/name` | none csm can read |
+
+These paths were checked against Claude Code 2.1.299, Codex 0.162.1, Gemini CLI 0.64.0, Copilot CLI 1.0.97 and Cursor CLI 2026.10.14: their binaries, documentation and runs with scratch profiles. `csm skills doctor --verify` asks each installed agent which skills it finds, with a command that makes no model request (`claude -p "/cost"`, `codex debug prompt-input`, `gemini skills list`, `copilot skill list`); Cursor CLI has no such command. Gemini CLI reads project skills only in folders you trusted.
+
+When a profile shares your own settings (`--link-settings`), its global copy goes into your own folder, such as `~/.claude/skills`, and every linked account uses that one copy. `--link-settings` now also links `~/.codex/skills` for Codex and `~/.agents/skills` for Gemini CLI, and gives Copilot CLI your `~/.agents/skills` through `COPILOT_SKILLS_DIRS`. For accounts made before, run `csm account link <name>`: it adds missing links and never replaces anything already in the profile. A new account gets the installed skills the first time it starts; switching accounts updates a stale copy but never overwrites one you edited.
+
+### Scopes
+
+- **Global** (default): every account of each agent the skill is enabled for. Limit it with `--provider codex,claude` or `csm skills disable <name> --provider gemini`.
+- **Project**: copies in the project's own skill folders, visible to git so your team can commit them.
+- **Task**: skills pinned to a Build Room task or an interactive session. They are copied into the worktree or project with a `.gitignore` of `*` inside, so they never show in `git status` or a commit, and a session's copies are removed when csm stops.
+
+### Compatibility
+
+`csm skills compatibility <name>` checks a skill against each agent and says why:
+
+- **compatible**: the agent reads it as it is.
+- **adapted**: the copy for that agent was changed in a documented way: `${CLAUDE_SKILL_DIR}` is replaced with the copy's folder for agents without that variable, `${CLAUDE_PROJECT_DIR}` with the project in project and task copies, and `allowed-tools` and `hooks` are removed until you approve them. Your original is never changed, and each change is listed.
+- **partial**: something only another agent understands, such as `$ARGUMENTS`, `` !`command` `` lines, `context: fork` or `disable-model-invocation`, stays as text.
+- **unsupported**: the agent cannot use it (for example Cursor's `metadata.surfaces` without `cli`).
+- **not verified**: csm has no checked facts for that agent.
+
+### Choosing skills for a task
+
+`csm skills policy --mode manual|recommended|automatic` sets how tasks get skills. Manual uses only what you pick and your defaults (`--default <name>`). Recommended (the default) also suggests installed skills whose name, tags or description match the task. Automatic picks up to three of those itself. csm never installs a skill on its own, never uses a disabled skill or one excluded from the project (`--exclude <name>`), and matches on the task text only, never your code. `csm skills resolve "<task>"` previews the result.
+
+If instructions disagree, agents are told this order: their own safety rules and approvals, the task's instructions and acceptance criteria, the project's own rules, then skills. csm also spots skills that insist on different package managers, formatters, test runners or deploy targets: a skill csm picked on its own is left out, a skill you picked that disagrees with the project is kept with a note, and two skills you picked that disagree pause a Build Room task until you keep one.
+
+In Build Room, pick skills per task in the plan editor or the task panel. The task's skills are resolved and pinned the first time it starts; retries and review fixes keep the same revisions.
+
+### Handoffs and failover
+
+A handoff carries the task's pinned skills and any skill the previous agent was seen loading. For the next agent csm re-resolves each one at the pinned revision, adapts it if needed, places it where that agent looks, and tells the agent how to load it and which skills could not come along and why. The same happens when failover moves a task to another agent or another account. An interrupted handoff picks up the same skill manifest when it is resumed, without placing a second copy. `csm skills handoff` shows what the last handoff carried.
+
+A handoff never activates hooks, `` !`command` `` lines or tool pre-approval for another agent; such a skill is listed as not carried. A newer upstream version is never substituted: if the pinned revision is gone, the skill is reported missing.
+
+### Installed, available, loaded, used
+
+- **Installed**: in csm's library, `~/.csm/skills`.
+- **Available**: a copy is where an agent looks. `csm skills list --all` shows this per agent account, for csm's skills and your own.
+- **Loaded (verified)**: the agent's own session record shows it loading the skill (see the table above). Nothing else counts: being available or named in an instruction is not evidence, and Cursor CLI's use is always unverified.
+- **Followed**: csm cannot tell. A receipt never treats loading a skill as proof the work followed it.
+
+`csm skills task <build> <task>` shows a task's skills, where each agent got them and the evidence. Build Receipts list each skill's source, revision, content hash, adapter version and verified or unverified use; they hold references and hashes, never the skill's contents.
+
+### Updates, pins and your own edits
+
+```bash
+csm skills update                 # check every skill's source
+csm skills update pdf --diff      # see what would change
+csm skills update pdf --yes       # apply; pinned skills need --unpin
+csm skills rollback pdf           # back to the previous revision, pinned
+csm skills diff pdf               # your edits to a placed copy
+csm skills keep pdf <folder>      # make your edited copy the installed version
+csm skills revert pdf <folder>    # restore csm's copy; yours is backed up
+```
+
+Installing from `owner/repo@<commit>` or with `--pin` pins a skill. An update shows the changed files, a worse inspection and new permission requests before you apply it, and leaves any copy you edited alone.
+
+### Skill security
+
+Every skill is treated as untrusted:
+
+- Nothing in a skill is ever run by csm, at install, update, search or selection. Scripts run only if an agent runs them, under that agent's own approval rules.
+- Before install csm reads every file for scripts, binary files, downloads piped to a shell, encoded commands, attempts to send local files or environment variables away, instructions to ignore other instructions or hide things from you, attempts to bypass approvals or touch `~/.csm`, credentials and private keys, invisible or reordering Unicode characters, and instructions hidden in HTML comments. Serious findings stop the install until you pass `--accept-risk`. A static read cannot prove a skill is safe.
+- `allowed-tools` and `hooks` stay out of the copies agents load until you install with `--approve-permissions`, and are never carried to another agent by a handoff.
+- Paths that leave the skill folder, symlinks and oversized skills are refused. Installs are staged, checked against what was inspected, and moved into place in one step.
+- csm only removes or replaces a folder it can prove it wrote and nobody changed since; anything else is reported and left alone. `csm skills remove` stops if one of its copies was edited, unless you pass `--keep-changed`.
+- Credential-like strings are redacted wherever csm shows skill text, and never written to manifests, handoffs or receipts.
+
+### When a skill does not show up
+
+1. `csm skills doctor` (and `csm doctor`) report missing or edited copies, broken links, skills an agent may not load, conflicting skills with the same name and accounts that do not see your own skill folders.
+2. `csm skills list --provider <agent> --account <name>` shows every folder that account reads and what is in it.
+3. `csm skills doctor --verify` asks the agents themselves.
+4. `csm skills sync` places or refreshes everything and removes unfinished installs.
+
 ## Security
 
 - `csm` does not read, copy or store tokens, cookies or Keychain secrets. Logging in is always the agent's own login flow.
@@ -740,6 +857,7 @@ That message appears when a configuration refers to `${GITHUB_TOKEN}` and the va
 - Task handoffs never include tool output, and everything they do include is redacted for tokens, bearer headers, passwords in URLs and secret-looking assignments before it is written. The stored diff is your own working tree, kept under `~/.csm` with mode `0600` and never placed in a prompt.
 - `accounts.json` holds names, paths, timestamps, the account email or username, and the health history above: when the account last worked or failed and the failure's classification. Never the agent's output.
 - `~/.csm` is created with mode `0700`, files with `0600`.
+- Skills are treated as untrusted and never run by csm; see [Skill security](#skill-security).
 - `csm` refuses to run when an environment variable would override the profile's login:
 
   | Agent | Variables |
@@ -774,6 +892,11 @@ To report a vulnerability, see [SECURITY.md](SECURITY.md).
 - MCP handoff was verified against the real CLIs (Claude Code 2.1.294, Codex 0.161, Gemini CLI 0.63, Copilot CLI 1.0.93): each lists the servers csm wrote. A live switch between two signed-in accounts of another agent has only been exercised with csm's fake agents.
 - MCP runtime state is never carried. A server that remembers things between calls starts over in the new profile unless it keeps that state somewhere both profiles reach.
 - `csm` does not read project-level MCP files of Codex, Gemini CLI or Copilot CLI, only the profile's own.
+- Skill discovery was verified with the real Claude Code 2.1.299, Codex 0.162.1, Gemini CLI 0.64.0 and Copilot CLI 1.0.97 using scratch profiles: each listed csm's global, project and git-hidden task copies (Gemini only after the folder was trusted). Cursor CLI 2026.10.14 has no listing command, so its discovery comes from its bundle and documentation. Agents loading skills during real sessions was not exercised: evidence parsing was tested with csm's test agents and session-record fixtures, and the Gemini and Copilot record formats come from their bundles, not from real sessions.
+- Gemini CLI ignores project skills in folders you have not trusted; csm then puts a task's copy in the account's own skills folder, where other Gemini CLI sessions of that account can see it until the task's copies are released.
+- Codex reads `$CODEX_HOME/skills`, which Codex marks as deprecated; csm keeps per-account copies there and `csm skills doctor --verify` tells you if a later Codex stops reading it.
+- Conflict detection between skills only covers package managers, formatters, test runners and deploy targets, from the words in each `SKILL.md`. Other contradictions are left to the stated order of precedence.
+- csm never runs a skill to check it, so it cannot tell whether a skill's scripts work or whether an agent followed the skill.
 
 ## Troubleshooting
 
