@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/onoja123/csm/internal/handoff"
+	"github.com/onoja123/csm/internal/skills"
 )
 
 const (
@@ -82,6 +83,7 @@ type Receipt struct {
 	AutoFix    *ReceiptAutoFix `json:"autofix,omitempty"`
 	PR         ReceiptPR       `json:"pull_request"`
 	Drift      *ReceiptDrift   `json:"drift,omitempty"`
+	Skills     []ReceiptSkill  `json:"skills,omitempty"`
 
 	Limitations []string `json:"limitations"`
 }
@@ -142,6 +144,36 @@ type ReceiptAgent struct {
 	Note     string        `json:"note,omitempty"`
 	Switches []AgentSwitch `json:"switches,omitempty"`
 }
+
+// ReceiptSkill is the provenance of one skill pinned to a task: the revision, where each agent got it and what the
+// agents' own session records show. It holds references and hashes, never the skill's contents.
+type ReceiptSkill struct {
+	TaskID   string              `json:"task_id"`
+	ID       string              `json:"id"`
+	Name     string              `json:"name"`
+	Source   string              `json:"source"`
+	Revision string              `json:"revision,omitempty"`
+	Hash     string              `json:"hash"`
+	Origin   string              `json:"origin"`
+	Adapter  string              `json:"adapter"`
+	Usage    string              `json:"usage"`
+	Agents   []ReceiptSkillAgent `json:"agents,omitempty"`
+}
+
+type ReceiptSkillAgent struct {
+	Agent       string   `json:"agent"`
+	State       string   `json:"state"`
+	Level       string   `json:"compatibility,omitempty"`
+	Adaptations []string `json:"adaptations,omitempty"`
+	Problem     string   `json:"problem,omitempty"`
+	Evidence    []string `json:"evidence,omitempty"`
+}
+
+const (
+	SkillUsageVerified   = "verified"
+	SkillUsageUnverified = "unverified"
+	SkillUsageNotPlaced  = "not placed"
+)
 
 type ReceiptReview struct {
 	Enabled          bool                 `json:"enabled"`
@@ -240,6 +272,7 @@ func newReceipt(b *Build, now time.Time) *Receipt {
 	r.Review = receiptReview(b)
 	r.AutoFix = receiptAutoFix(b)
 	r.PR = ReceiptPR{State: orValue(b.PR.State, "not_prepared"), URL: b.PR.URL, Pushed: b.PR.Pushed, Error: handoff.Redact(b.PR.Error)}
+	r.Skills = receiptSkills(b)
 	r.Outcome = checksOutcome(r.Checks)
 	r.Acceptance = acceptance(b, r)
 	r.PartialReasons = partialReasons(b, r)
@@ -248,6 +281,55 @@ func newReceipt(b *Build, now time.Time) *Receipt {
 	r.Headline = headline(r)
 
 	return r
+}
+
+func receiptSkills(b *Build) []ReceiptSkill {
+	var out []ReceiptSkill
+
+	for _, t := range b.Tasks {
+		if t.SkillManifest == "" {
+			continue
+		}
+
+		m, err := skills.LoadManifest(t.SkillManifest)
+		if err != nil {
+			continue
+		}
+
+		for _, ts := range m.Skills {
+			rs := ReceiptSkill{TaskID: t.ID, ID: ts.ID, Name: ts.Name, Source: handoff.Redact(ts.Source), Revision: ts.Revision, Hash: ts.Hash, Origin: ts.Origin, Adapter: skills.AdapterVersion, Usage: SkillUsageNotPlaced}
+
+			for _, p := range ts.Placements {
+				ra := ReceiptSkillAgent{Agent: agentLabel(p.Provider, p.Account), State: string(p.State), Level: string(p.Level), Adaptations: p.Adaptations, Problem: handoff.Redact(p.Problem)}
+
+				for _, ev := range p.Evidence {
+					ra.Evidence = append(ra.Evidence, ev.Kind+" in session "+ev.Session)
+				}
+
+				switch {
+				case p.State == skills.StateInvoked:
+					rs.Usage = SkillUsageVerified
+				case rs.Usage != SkillUsageVerified && p.Dir != "" && p.State != skills.StateFailed && p.State != skills.StateUnavailable:
+					rs.Usage = SkillUsageUnverified
+				}
+
+				rs.Agents = append(rs.Agents, ra)
+			}
+
+			out = append(out, rs)
+		}
+
+		for _, ev := range m.Observed {
+			out = append(out, ReceiptSkill{TaskID: t.ID, Name: ev.Skill, Origin: "used without selection", Adapter: skills.AdapterVersion, Usage: SkillUsageVerified,
+				Agents: []ReceiptSkillAgent{{Agent: providerName(ev.Provider), State: string(skills.StateInvoked), Evidence: []string{ev.Kind + " in session " + ev.Session}}}})
+		}
+
+		for _, name := range m.Missing {
+			out = append(out, ReceiptSkill{TaskID: t.ID, Name: name, Origin: "selected", Adapter: skills.AdapterVersion, Usage: SkillUsageNotPlaced, Agents: []ReceiptSkillAgent{{State: string(skills.StateUnavailable), Problem: "not installed"}}})
+		}
+	}
+
+	return out
 }
 
 // checkedCommit is the single revision the final checks ran on; legacy runs recorded no revision per check.
@@ -795,6 +877,21 @@ func limitations(b *Build, r *Receipt, final []CheckResult) []string {
 
 	if b.Policy.Sandbox {
 		out = append(out, "Checks ran in a network-less sandbox; failures caused by the sandbox show as failed or unavailable.")
+	}
+
+	if len(r.Skills) > 0 {
+		out = append(out, "A skill being placed for an agent, or loaded by it, does not show that its instructions were followed.")
+		unverified := 0
+
+		for _, s := range r.Skills {
+			if s.Usage == SkillUsageUnverified {
+				unverified++
+			}
+		}
+
+		if unverified > 0 {
+			out = append(out, fmt.Sprintf("%d skill(s) were available to agents, but no agent's session record shows them being loaded.", unverified))
+		}
 	}
 
 	if len(r.Checks) > 0 && b.Policy.RunBaseline && len(r.Baseline) == 0 {

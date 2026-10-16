@@ -178,6 +178,7 @@ func (d *daemon) handler() http.Handler {
 	mux.HandleFunc("GET /v1/approvals", d.getApprovals)
 	mux.HandleFunc("POST /v1/approvals/{id}/decision", d.decideApproval)
 	mux.HandleFunc("POST /v1/hooks/pre-tool-use", d.hookPreToolUse)
+	d.skillRoutes(mux)
 
 	return mux
 }

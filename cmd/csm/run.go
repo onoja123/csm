@@ -52,6 +52,9 @@ type runner struct {
 	// autoHops counts automatic cross-agent handoffs in this csm invocation; tried holds the agents already used, so failover cannot cycle.
 	autoHops int
 	tried    map[string]bool
+	// skillsFile is the skill manifest a handoff carried to this runner, when there is one.
+	skillsFile   string
+	skillsChosen bool
 }
 
 type usageCheck struct {
@@ -104,6 +107,10 @@ func (r *runner) run(userArgs []string) (int, *nextRun, error) {
 		args = append(r.provider.NewSessionArgs(r.features, sessionID, ""), userArgs...)
 	}
 
+	if r.pendingHandoff != "" && exists(filepath.Join(r.pendingHandoff, skillsManifestFile)) {
+		r.skillsFile = filepath.Join(r.pendingHandoff, skillsManifestFile)
+	}
+
 	recovered, err := r.recoverTransition()
 	if err != nil {
 		return 1, nil, err
@@ -111,6 +118,8 @@ func (r *runner) run(userArgs []string) (int, *nextRun, error) {
 
 	if recovered != nil {
 		args, sessionID = recovered.args, recovered.sessionID
+	} else if r.pendingHandoff == "" && !r.skillsChosen {
+		os.Remove(filepath.Join(r.stateDir, skillsManifestFile))
 	}
 
 	for {
@@ -166,6 +175,8 @@ func (r *runner) launch(acct *Account, args []string, sessionID string, sigs cha
 	os.Remove(filepath.Join(r.stateDir, eventFile))
 	os.Remove(filepath.Join(r.stateDir, requestFile))
 	os.Remove(filepath.Join(r.stateDir, providerSessionFile))
+
+	r.prepareSkills(acct)
 
 	args = append(r.provider.LaunchArgs(r.csmPath), args...)
 	cmd := exec.Command(r.provider.Executable(), args...)
@@ -306,8 +317,14 @@ wait:
 
 	res.exitCode = exitCode(waitErr)
 
+	agentSession := r.currentSessionID(acct, startedAt, res.sessionID)
+
 	if receivedHandoff != "" {
-		recordTargetSession(receivedHandoff, r.currentSessionID(acct, startedAt, res.sessionID))
+		recordTargetSession(receivedHandoff, agentSession)
+	}
+
+	if res.switchTo == "" && res.crossTo == "" {
+		r.observeSkills(r.provider, acct, agentSession)
 	}
 
 	if res.reason == provider.StopReasonProcessExited && res.switchTo == "" {

@@ -39,8 +39,12 @@ type scenario struct {
 	// seed is a transcript the fake Claude Code writes into every new session before its own line.
 	seed   string
 	policy string
+	// skills are pinned to the session as `csm <agent> --skills` does.
+	skills []string
 	before func(s *State, projectDir string)
 	during func(home, projectDir string)
+	// after runs once the agents have stopped, before the scenario's files are removed.
+	after func(s *State, projectDir, gitStatus string)
 }
 
 func runFailoverScenario(csmPath string, sc scenario) (failoverResult, error) {
@@ -209,6 +213,14 @@ func runFailoverScenario(csmPath string, sc scenario) (failoverResult, error) {
 		sc.before(s, r.project.Dir)
 	}
 
+	if len(sc.skills) > 0 {
+		if err := r.selectSkills(sc.skills); err != nil {
+			return res, err
+		}
+
+		r.skillsChosen = true
+	}
+
 	if sc.during != nil {
 		go sc.during(s.Home, r.project.Dir)
 	}
@@ -234,8 +246,14 @@ func runFailoverScenario(csmPath string, sc scenario) (failoverResult, error) {
 		r.pendingHandoff, r.autoHops, r.tried = next.handoffDir, next.autoHops, next.tried
 	}
 
+	releaseSessionSkills(r.skillsPath(), r.cwd)
+
 	res.output = out.String()
 	res.gitAfter, _ = git("status", "--short", "--branch")
+
+	if sc.after != nil {
+		sc.after(s, project, res.gitAfter)
+	}
 
 	if err != nil {
 		return res, err

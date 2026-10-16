@@ -183,6 +183,10 @@ type BuildTask struct {
 	Switches   []AgentSwitch `json:"switches,omitempty"`
 	// BaseRef starts the task's worktree somewhere other than the run's base, such as the commit holding a regression test.
 	BaseRef string `json:"base_ref,omitempty"`
+	// Skills are the skills the user picked for the task, by name or ID; the selection policy may add matches.
+	Skills []string `json:"skills,omitempty"`
+	// SkillManifest is the task's pinned skill selection, written when the task first starts.
+	SkillManifest string `json:"skill_manifest,omitempty"`
 }
 
 type Attempt struct {

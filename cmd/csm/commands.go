@@ -14,6 +14,7 @@ import (
 
 	"github.com/onoja123/csm/internal/handoff"
 	"github.com/onoja123/csm/internal/provider"
+	"github.com/onoja123/csm/internal/skills"
 )
 
 func displayPath(path string) string {
@@ -227,6 +228,7 @@ func cmdDoctor(log *Logger, home string) error {
 		if cwd, err := os.Getwd(); err == nil {
 			doctorMCP(log, s, usable, cwd, fail)
 			doctorHandoff(log, s, usable, cwd, fail)
+			doctorSkills(log, s, cwd, fail)
 		}
 	}
 
@@ -498,7 +500,7 @@ func cmdAccounts(log *Logger, home string) error {
 
 func cmdAccount(log *Logger, home string, args []string) error {
 	if len(args) < 2 {
-		return errors.New("usage: csm account add|login|remove|enable|disable|health|priority <name>")
+		return errors.New("usage: csm account add|login|link|remove|enable|disable|health|priority <name>")
 	}
 
 	s, err := loadState(home)
@@ -540,6 +542,9 @@ func cmdAccount(log *Logger, home string, args []string) error {
 		}
 
 		return accountLogin(log, s, p, a)
+
+	case "link":
+		return accountLink(log, s, name)
 
 	case "remove":
 		for _, sess := range s.liveSessions() {
@@ -683,6 +688,41 @@ func accountAdd(log *Logger, s *State, providerID, name string, linkSettings boo
 	log.Info("Created profile %s at %s", name, displayPath(a.ConfigDir))
 
 	return accountLogin(log, s, p, a)
+}
+
+// accountLink shares the user's own agent settings with an existing account, adding only what is missing.
+func accountLink(log *Logger, s *State, name string) error {
+	a, err := s.resolveAccount(name)
+	if err != nil {
+		return err
+	}
+
+	p, err := provider.New(a.providerID(), "")
+	if err != nil {
+		return err
+	}
+
+	userDir, linked, kept, err := provider.RelinkUserConfig(p, a.ConfigDir)
+	if err != nil {
+		return err
+	}
+
+	switch {
+	case len(linked) > 0:
+		log.Info("Sharing from %s with %s: %s", displayPath(userDir), a.Name, strings.Join(linked, ", "))
+	case len(kept) == 0:
+		log.Info("%s already shares everything csm links from %s.", a.Name, displayPath(userDir))
+	}
+
+	for _, k := range kept {
+		log.Info("! %s", k)
+	}
+
+	if _, err := syncSkills(skills.Open(s.Home), s, nil); err != nil {
+		log.Info("! could not refresh installed skills: %v", err)
+	}
+
+	return nil
 }
 
 func accountLogin(log *Logger, s *State, p provider.Provider, a *Account) error {
@@ -968,6 +1008,15 @@ func cmdRun(log *Logger, home, providerID string, args []string) (int, error) {
 	}
 
 	var prev *nextRun
+	var chosen []string
+
+	if len(args) >= 2 && args[0] == "--skills" {
+		chosen, args = strings.Split(args[1], ","), args[2:]
+	}
+
+	var lastSkills, lastCwd string
+
+	defer func() { releaseSessionSkills(lastSkills, lastCwd) }()
 
 	for {
 		r, err := newRunner(log, s, providerID)
@@ -977,9 +1026,17 @@ func cmdRun(log *Logger, home, providerID string, args []string) (int, error) {
 
 		if prev != nil {
 			r.pendingHandoff, r.autoHops, r.tried = prev.handoffDir, prev.autoHops, prev.tried
+		} else if len(chosen) > 0 {
+			if err := r.selectSkills(chosen); err != nil {
+				return 1, err
+			}
+
+			r.skillsChosen = true
 		}
 
 		code, next, err := r.run(args)
+		lastSkills, lastCwd = r.skillsPath(), r.cwd
+
 		if err != nil {
 			return code, autoHandoffFailed(log, prev, err)
 		}
