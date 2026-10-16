@@ -27,6 +27,7 @@ const (
 	StageCheckpointed     = "checkpointed"
 	StageContextExtracted = "context_extracted"
 	StageMCPPrepared      = "mcp_prepared"
+	StageSkillsPrepared   = "skills_prepared"
 	StageTargetStarted    = "target_started"
 	StageCompleted        = "completed"
 	StageFailed           = "failed"
@@ -92,6 +93,7 @@ type State struct {
 	Context   Context      `json:"context"`
 	Git       Git          `json:"git"`
 	MCP       []mcp.Result `json:"mcp,omitempty"`
+	Skills    *Skills      `json:"skills,omitempty"`
 	Previous  string       `json:"previous,omitempty"`
 	Error     string       `json:"error,omitempty"`
 
@@ -316,6 +318,10 @@ func Instruction(st State, mdPath string) string {
 		fmt.Fprintf(&b, "\n\nThe task: %s", oneLine(task))
 	}
 
+	if st.Skills != nil && st.Skills.Brief != "" {
+		b.WriteString("\n\n" + st.Skills.Brief)
+	}
+
 	return b.String()
 }
 
@@ -455,6 +461,11 @@ func Render(st State) string {
 		for _, r := range st.MCP {
 			b.WriteString("- " + r.Line() + "\n")
 		}
+	}
+
+	if st.Skills != nil && !st.Skills.Empty() {
+		b.WriteString("\n## Skills\n\n")
+		b.WriteString(st.Skills.Render())
 	}
 
 	if st.Outcome != nil {

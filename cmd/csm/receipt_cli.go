@@ -192,6 +192,44 @@ func printReceipt(log *Logger, r *Receipt) {
 	}
 
 	log.Blank()
+	if len(r.Skills) > 0 {
+		log.Info("Skills")
+
+		for _, sk := range r.Skills {
+			version := shortSHA(sk.Revision)
+
+			if version == "" && sk.Hash != "" {
+				version = "content " + shortHash(sk.Hash)
+			}
+
+			log.Info("  %-10s %-26s %-11s %s %s (%s)", sk.TaskID, sk.Name, sk.Usage, sk.Source, version, sk.Origin)
+
+			for _, a := range sk.Agents {
+				line := fmt.Sprintf("      %s: %s", a.Agent, a.State)
+
+				if a.Level != "" {
+					line += ", " + a.Level
+				}
+
+				if a.Problem != "" {
+					line += " — " + a.Problem
+				}
+
+				log.Info("%s", line)
+
+				for _, ad := range a.Adaptations {
+					log.Info("        adapted: %s", ad)
+				}
+
+				for _, ev := range a.Evidence {
+					log.Info("        evidence: %s", ev)
+				}
+			}
+		}
+
+		log.Blank()
+	}
+
 	log.Info("Limitations")
 
 	for _, l := range r.Limitations {

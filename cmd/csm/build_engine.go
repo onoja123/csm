@@ -486,9 +486,18 @@ func (e *buildEngine) launch(b *Build, role, taskID, providerID, dir, step, labe
 		return nil, err
 	}
 
+	env := []string{"CSM_BUILD_ID=" + b.ID, "CSM_BUILD_STEP=" + step, "CSM_TASK_REPORT=" + a.Report, "CSM_BUILD_CONTRACT=" + brief}
+
+	if t := b.task(taskID); t != nil && (role == RoleImplement || role == RoleFix) && t.SkillManifest != "" {
+		if skillBrief := e.prepareTaskSkills(b, t, providerID, acct, dir); skillBrief != "" {
+			instruction += "\n\n" + skillBrief
+		}
+
+		env = append(env, "CSM_TASK_SKILLS="+t.SkillManifest)
+	}
+
 	starter, _ := provider.Starter(p)
 	args := starter.TaskArgs(f, instruction+"\n\n"+contract)
-	env := []string{"CSM_BUILD_ID=" + b.ID, "CSM_BUILD_STEP=" + step, "CSM_TASK_REPORT=" + a.Report, "CSM_BUILD_CONTRACT=" + brief}
 
 	run, err := e.runs.spawn(s, runKindAgent, providerID, dir, append([]string{providerID}, args...), nil, 0, 0, spawnOpts{env: env, buildID: b.ID, task: taskID, label: label})
 	if err != nil {
@@ -829,6 +838,12 @@ func (e *buildEngine) startTask(b *Build, t *BuildTask) {
 
 			return
 		}
+	}
+
+	if err := e.resolveTaskSkills(b, t, agent); err != nil {
+		e.taskProblem(b, t, err.Error(), "Change the task's skills (csm skills resolve previews the choice), then retry the task.")
+
+		return
 	}
 
 	t.Status = TaskAssigned
@@ -1605,6 +1620,7 @@ func (e *buildEngine) createFix(b *Build, findings []Finding) {
 	}
 
 	b.Tasks = append(b.Tasks, t)
+	e.carryFixSkills(b, t)
 
 	if e.setStatus(b, BuildFixing) {
 		e.event(b, "fix.created", t.ID, fmt.Sprintf("Sending %d blocking finding(s) back to %s", len(findings), providerName(owner)))

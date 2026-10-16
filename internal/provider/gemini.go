@@ -123,21 +123,14 @@ func (g Gemini) Login(profileDir string) error {
 	return cmd.Run()
 }
 
-// LinkUserConfig symlinks ~/.gemini settings into a profile; ~/.gemini itself is never modified.
+// LinkUserConfig shares the user's own settings with a fresh profile; the user's directory is never modified.
 func (g Gemini) LinkUserConfig(profileDir string) (string, []string, error) {
-	home, err := os.UserHomeDir()
-
+	userDir, links, err := g.userLinks(profileDir)
 	if err != nil {
 		return "", nil, err
 	}
 
-	userDir := filepath.Join(home, ".gemini")
-
-	if err := os.MkdirAll(geminiDir(profileDir), 0o700); err != nil {
-		return userDir, nil, err
-	}
-
-	linked, err := linkUserConfig(userDir, geminiDir(profileDir), []string{"settings.json", "GEMINI.md", "commands", "extensions", "skills"})
+	linked, _, err := applyLinks(links)
 
 	return userDir, linked, err
 }

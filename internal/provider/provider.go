@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -124,27 +123,6 @@ func profileEnv(key, profileDir string, extra []string) []string {
 	env = append(env, key+"="+profileDir)
 
 	return append(env, extra...)
-}
-
-// linkUserConfig symlinks the user's own agent settings into a profile; the user's directory is never modified.
-func linkUserConfig(userDir, profileDir string, names []string) ([]string, error) {
-	var linked []string
-
-	for _, name := range names {
-		src := filepath.Join(userDir, name)
-
-		if _, err := os.Stat(src); err != nil {
-			continue
-		}
-
-		if err := os.Symlink(src, filepath.Join(profileDir, name)); err != nil {
-			return linked, err
-		}
-
-		linked = append(linked, name)
-	}
-
-	return linked, nil
 }
 
 func NewSessionID() string {

@@ -78,6 +78,15 @@ func (r *runner) buildHandoff(source provider.Provider, from *Account, sessionID
 	st.MCP = rep.Results
 	st.Stage = handoff.StageMCPPrepared
 
+	if st.Skills = r.carrySkills(source, from, sessionID, target); st.Skills != nil {
+		st.Stage = handoff.StageSkillsPrepared
+		r.step("Carrying skills", len(st.Skills.NotCarried) == 0)
+
+		if os.Getenv("CSM_TASK_SKILLS") == "" {
+			st.Skills.Source, st.Skills.Manifest = st.Skills.Manifest, filepath.Join(dir, skillsManifestFile)
+		}
+	}
+
 	reference := *st
 
 	if haveSaved {
@@ -92,6 +101,10 @@ func (r *runner) buildHandoff(source provider.Provider, from *Account, sessionID
 
 	if n := rep.Count(mcp.Failed); n > 0 {
 		out.Problems = append(out.Problems, fmt.Sprintf("%d MCP server(s) could not be carried over.", n))
+	}
+
+	if st.Skills != nil && len(st.Skills.NotCarried) > 0 {
+		out.Problems = append(out.Problems, fmt.Sprintf("%d skill(s) could not be carried over.", len(st.Skills.NotCarried)))
 	}
 
 	out.Problems = append(out.Problems, out.Verification.Problems()...)
@@ -110,6 +123,14 @@ func (r *runner) buildHandoff(source provider.Provider, from *Account, sessionID
 	}
 
 	r.step("Saving handoff", true)
+
+	if st.Skills != nil && st.Skills.Manifest != "" {
+		if data, err := os.ReadFile(orText(st.Skills.Source, st.Skills.Manifest)); err == nil {
+			if err := os.WriteFile(filepath.Join(dir, skillsManifestFile), data, 0o600); err != nil {
+				slog.Debug("copy skill manifest", "err", err)
+			}
+		}
+	}
 
 	return st, dir
 }

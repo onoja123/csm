@@ -180,15 +180,14 @@ func cursorUserDir() (string, error) {
 	return filepath.Join(home, ".cursor"), err
 }
 
-// Only cli-config.json lives in the config dir; MCP servers always come from ~/.cursor/mcp.json.
+// LinkUserConfig shares the user's own settings with a fresh profile; the user's directory is never modified.
 func (c Cursor) LinkUserConfig(profileDir string) (string, []string, error) {
-	userDir, err := cursorUserDir()
-
+	userDir, links, err := c.userLinks(profileDir)
 	if err != nil {
 		return "", nil, err
 	}
 
-	linked, err := linkUserConfig(userDir, profileDir, []string{"cli-config.json"})
+	linked, _, err := applyLinks(links)
 
 	return userDir, linked, err
 }

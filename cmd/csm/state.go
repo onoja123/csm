@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/onoja123/csm/internal/provider"
+	"github.com/onoja123/csm/internal/skills"
 )
 
 const stateVersion = 1
@@ -32,6 +33,8 @@ type Config struct {
 	FailoverPolicy   string            `json:"failover_policy,omitempty"`
 	// HandoffTo lists the agents, in order, that automatic failover may hand the task to once every account of the running agent is unavailable.
 	HandoffTo []string `json:"handoff_to,omitempty"`
+	// Skills holds how csm picks installed skills for tasks; the skills themselves live in the skills library.
+	Skills skills.Policy `json:"skills,omitzero"`
 }
 
 type Account struct {

@@ -28,6 +28,7 @@ Commands:
   account add <name>       Create a profile and log in
                            (--provider codex|gemini|copilot|cursor for another agent, --link-settings to share your own agent settings)
   account login <name>     Log in to an existing profile again
+  account link <name>      Share your own agent settings and skills with an existing profile (never replaces files)
   account remove <name>    Forget an account (its profile directory is kept)
   account enable <name>    Include an account in switching
   account disable <name>   Exclude an account from switching
@@ -38,9 +39,11 @@ Commands:
   usage [name...] [--cached]  Check 5-hour and 7-day plan usage per account
   auto automatic|manual|disabled|status  Set what happens on a usage limit (on/off still work)
   auto handoff <agent,...>|off  Agents to hand the task to when every account of the running one is limited
+  skills                   Find, install and manage Agent Skills for every agent (csm skills help)
   mcp [account]            Show the MCP servers each account would start here
   mcp handoff <from> <to>  Preview moving MCP servers between accounts (--apply writes them)
   claude [args...]         Run Claude Code under the active Claude Code account
+                           (--skills a,b first pins installed skills to the session)
   codex [args...]          Run Codex under the active Codex account
   gemini [args...]         Run Gemini CLI under the active Gemini CLI account
   copilot [args...]        Run GitHub Copilot CLI under the active Copilot account
@@ -181,6 +184,9 @@ func run(args []string) int {
 
 	case "mcp":
 		err = cmdMCP(log, home, rest)
+
+	case "skills", "skill":
+		err = cmdSkills(log, home, rest)
 
 	case provider.ClaudeID, provider.CodexID, provider.GeminiID, provider.CopilotID, provider.CursorID:
 		code, err = cmdRun(log, home, cmd, rest)

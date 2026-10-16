@@ -45,7 +45,13 @@ func (c Copilot) Executable() string { return c.Path }
 func (c Copilot) CheckEnv() error { return checkAuthEnv(copilotAuthOverrideEnv) }
 
 func (c Copilot) Env(profileDir string, extra ...string) []string {
-	return profileEnv("COPILOT_HOME", profileDir, extra)
+	env := profileEnv("COPILOT_HOME", profileDir, extra)
+
+	if shared := copilotSharedSkills(profileDir); shared != "" {
+		env = appendEnvList(env, "COPILOT_SKILLS_DIRS", shared)
+	}
+
+	return env
 }
 
 func (c Copilot) Version() (string, error) {
@@ -154,16 +160,14 @@ func (c Copilot) Login(profileDir string) error {
 	return cmd.Run()
 }
 
-// LinkUserConfig symlinks ~/.copilot settings into a profile; config.json is left out because it names the signed-in user.
+// LinkUserConfig shares the user's own settings with a fresh profile; the user's directory is never modified.
 func (c Copilot) LinkUserConfig(profileDir string) (string, []string, error) {
-	home, err := os.UserHomeDir()
-
+	userDir, links, err := c.userLinks(profileDir)
 	if err != nil {
 		return "", nil, err
 	}
 
-	userDir := filepath.Join(home, ".copilot")
-	linked, err := linkUserConfig(userDir, profileDir, []string{"settings.json", "mcp-config.json", "copilot-instructions.md", "agents", "skills"})
+	linked, _, err := applyLinks(links)
 
 	return userDir, linked, err
 }

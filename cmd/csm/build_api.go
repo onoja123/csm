@@ -316,6 +316,7 @@ type planEdit struct {
 		Files      []string `json:"files"`
 		DependsOn  []string `json:"depends_on"`
 		Provider   string   `json:"provider"`
+		Skills     []string `json:"skills"`
 	} `json:"tasks"`
 }
 
@@ -335,7 +336,7 @@ func (e *buildEngine) editPlan(id string, in planEdit) error {
 	var tasks []*BuildTask
 
 	for i, t := range in.Tasks {
-		bt := &BuildTask{ID: strings.TrimSpace(t.ID), Kind: TaskKindImplement, Title: clean(t.Title, 120), Objective: clean(t.Objective, 2000), Scope: clean(t.Scope, 1000), Acceptance: cleanAll(t.Acceptance, 12, 300), Context: clean(t.Context, 2000), DependsOn: cleanAll(t.DependsOn, maxPlanTasks, 40), Provider: t.Provider, Status: TaskBlocked, Order: i}
+		bt := &BuildTask{ID: strings.TrimSpace(t.ID), Kind: TaskKindImplement, Title: clean(t.Title, 120), Objective: clean(t.Objective, 2000), Scope: clean(t.Scope, 1000), Acceptance: cleanAll(t.Acceptance, 12, 300), Context: clean(t.Context, 2000), DependsOn: cleanAll(t.DependsOn, maxPlanTasks, 40), Provider: t.Provider, Status: TaskBlocked, Order: i, Skills: cleanAll(t.Skills, 12, 200)}
 
 		for _, f := range t.Files {
 			if p := cleanPath(f); p != "" {
@@ -374,8 +375,9 @@ func (e *buildEngine) editPlan(id string, in planEdit) error {
 }
 
 type actionRequest struct {
-	Task     string `json:"task"`
-	Provider string `json:"provider"`
+	Task     string   `json:"task"`
+	Provider string   `json:"provider"`
+	Skills   []string `json:"skills,omitempty"`
 }
 
 var errActionState = errors.New("that action is not available in the run's current state")
@@ -469,6 +471,16 @@ func (e *buildEngine) apply(b *Build, action string, req actionRequest) error {
 		t.Status, t.Problem, t.Recovery = TaskReady, "", ""
 		e.event(b, "task.retry", t.ID, fmt.Sprintf("You retried task %q with %s", t.Title, providerName(t.Provider)))
 		e.resumePhase(b, t)
+
+	case "set-skills":
+		t := b.task(req.Task)
+
+		if t == nil || t.Status == TaskRunning || t.Status == TaskAssigned || t.Status == TaskCompleted {
+			return errActionState
+		}
+
+		t.Skills, t.SkillManifest = cleanAll(req.Skills, 12, 200), ""
+		e.event(b, "task.skills", t.ID, fmt.Sprintf("You set the skills of task %q: %s", t.Title, orText(strings.Join(t.Skills, ", "), "none")))
 
 	case "assign":
 		t := b.task(req.Task)
