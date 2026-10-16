@@ -49,7 +49,7 @@ What is different about Cursor:
 
 ## Requirements
 
-- macOS or Linux. Windows is not supported: csm does not build there yet.
+- macOS or Linux. Windows is not supported yet: csm builds there but exits with a message when it starts.
 - Go 1.25 or newer
 - At least one of the agents above, installed and on your `PATH`
 
@@ -755,12 +755,14 @@ That message appears when a configuration refers to `${GITHUB_TOKEN}` and the va
 
 `csm` does not bypass authentication, rate limits or usage limits. Using several accounts must still follow the terms that apply to each of them.
 
+To report a vulnerability, see [SECURITY.md](SECURITY.md).
+
 ## Limitations
 
 - Codex, Gemini CLI and Copilot CLI support has not yet been tested with signed-in accounts. It was built against each CLI signed out and against fake agents.
 - Cursor CLI support was checked against the real CLI 2026.10.14, signed out (help, `--version`, `status` and `about`, the failure when signed out) and signed in: sign-in through `csm account add`, reuse of an existing sign-in, the identity `status` reports, `csm doctor`, the workspace trust prompt, and an interactive session started from CSM Desktop that edited files on a typed task, whose chat csm found and linked in a handoff to another agent. Approval prompts, `--resume` of a real chat and Build Room tasks done by a real Cursor agent have only been exercised with csm's fake Cursor CLI.
 - Switching a running session between two real Claude Code accounts has been exercised with csm's fake agent, not yet with two signed-in accounts.
-- Windows does not build. csm relies on Unix signals, `/bin/sh` and symlinks.
+- Windows is not supported: csm relies on Unix signals, `/bin/sh` and symlinks. It builds for Windows so that CI keeps it compiling, but exits when it starts.
 - If csm itself is killed with `SIGKILL`, the agent it started keeps running on its own and must be closed by hand. Ctrl+C, `SIGTERM` and closing the terminal stop the agent cleanly.
 - A second `csm use` or `csm next` sent while a switch is already in progress is acknowledged but ignored.
 - Outside a git repository, a project reached through a symlink gets its own state, separate from the same directory reached by its real path. Inside a git repository both resolve to the repository root.
@@ -817,4 +819,8 @@ To add an agent, implement the `Provider` interface in `internal/provider`, regi
 
 ## Contributing
 
-Issues and pull requests are welcome. Please run `go vet ./...` and `go test ./...` before opening a pull request.
+Issues and pull requests are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) covers setup and the checks CI runs, and everyone taking part is expected to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
+
+## License
+
+[MIT](LICENSE)

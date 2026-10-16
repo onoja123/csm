@@ -92,7 +92,7 @@ func (r *runner) run(userArgs []string) (int, *nextRun, error) {
 	}
 
 	sigs := make(chan os.Signal, 8)
-	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGUSR1, syscall.SIGUSR2)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP, sigFailure, sigSwitch)
 
 	defer signal.Stop(sigs)
 
@@ -281,7 +281,7 @@ wait:
 				userStopped = true
 				cmd.Process.Signal(sig)
 
-			case syscall.SIGUSR1:
+			case sigFailure:
 				var f provider.Failure
 
 				if err := readJSON(filepath.Join(r.stateDir, eventFile), &f); err != nil {
@@ -291,7 +291,7 @@ wait:
 
 				r.handleFailure(acct, &res, f, userStopped, stop)
 
-			case syscall.SIGUSR2:
+			case sigSwitch:
 				r.handleSwitchRequest(acct, &res, stop)
 			}
 		}

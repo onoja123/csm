@@ -292,9 +292,9 @@ func listenSocket(home string) (net.Listener, error) {
 	}
 
 	os.Remove(path)
-	old := syscall.Umask(0o177)
+	old := setUmask(0o177)
 	ln, err := net.Listen("unix", path)
-	syscall.Umask(old)
+	setUmask(old)
 
 	if err != nil {
 		return nil, err
@@ -352,7 +352,7 @@ func serveDetach(log *Logger, home, listen string) error {
 	cmd := exec.Command(self, args...)
 	cmd.Env = append(os.Environ(), "CSM_HOME="+home)
 	cmd.Stdout, cmd.Stderr = logFile, logFile
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	cmd.SysProcAttr = detachedProcess()
 
 	if err := cmd.Start(); err != nil {
 		return err
@@ -402,7 +402,7 @@ func serveStop(log *Logger, home string) error {
 		return err
 	}
 
-	if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
+	if err := signalProcess(pid, syscall.SIGTERM); err != nil {
 		return err
 	}
 
